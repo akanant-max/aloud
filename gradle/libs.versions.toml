@@ -21,6 +21,7 @@ compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 
+androidx-core = "androidx.core:core-ktx:1.19.0"
 activity-compose = "androidx.activity:activity-compose:1.12.0"
 navigation-compose = "androidx.navigation:navigation-compose:2.9.6"
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }

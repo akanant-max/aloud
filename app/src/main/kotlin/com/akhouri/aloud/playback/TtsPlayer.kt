@@ -1,6 +1,7 @@
 package com.akhouri.aloud.playback
 
 import android.os.Looper
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
@@ -9,6 +10,7 @@ import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
 import com.akhouri.aloud.tts.NarrationState
 import com.akhouri.aloud.tts.Narrator
+import com.akhouri.aloud.util.CrashReporter
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
@@ -35,7 +37,11 @@ class TtsPlayer(
 
   init {
     scope.launch {
-      narrator.state.collectLatest { invalidateState() }
+      narrator.state.collectLatest {
+        // A malformed state would otherwise propagate out of Media3 and kill the service.
+        runCatching { invalidateState() }
+          .onFailure { error -> CrashReporter.record(error, "media session state") }
+      }
     }
   }
 
@@ -63,26 +69,36 @@ class TtsPlayer(
         .build()
     }
 
-    val builder = State.Builder()
-      .setAvailableCommands(COMMANDS)
+    val builder = State.Builder().setAvailableCommands(COMMANDS)
+
+    // Media3 rejects any state that is not idle while the playlist is empty, so a book whose
+    // chapters have not loaded yet has to be reported as idle rather than ready.
+    if (playlist.isEmpty()) {
+      return builder
+        .setPlaybackState(Player.STATE_IDLE)
+        .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+        .build()
+    }
+
+    val index = narration.chapterIndex.coerceIn(0, playlist.lastIndex)
+    val durationMs = playlist[index].durationUs
+      .takeIf { it != C.TIME_UNSET }
+      ?.div(1_000L)
+      ?: Long.MAX_VALUE
+    // The timeline is synthetic, so the position has to be held inside the duration derived
+    // from it; a position past the end is not a state Media3 accepts.
+    val position = positionMsIn(narration).coerceIn(0L, (durationMs - 1L).coerceAtLeast(0L))
+
+    return builder
       .setPlaybackState(
-        when {
-          !narration.hasBook -> Player.STATE_IDLE
-          narration.isPreparing -> Player.STATE_BUFFERING
-          else -> Player.STATE_READY
-        },
+        if (narration.isPreparing) Player.STATE_BUFFERING else Player.STATE_READY,
       )
       .setPlayWhenReady(narration.isPlaying, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
       .setPlaybackParameters(PlaybackParameters(narration.speechRate, narration.pitch))
-
-    if (playlist.isNotEmpty()) {
-      builder
-        .setPlaylist(playlist)
-        .setCurrentMediaItemIndex(narration.chapterIndex.coerceIn(0, playlist.lastIndex))
-        .setContentPositionMs { positionMsIn(narration) }
-    }
-
-    return builder.build()
+      .setPlaylist(playlist)
+      .setCurrentMediaItemIndex(index)
+      .setContentPositionMs(position)
+      .build()
   }
 
   override fun handlePrepare(): ListenableFuture<*> = Futures.immediateVoidFuture()

@@ -4,6 +4,8 @@ import android.util.Log
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.entity.ChapterEntity
 import com.akhouri.aloud.data.entity.ProgressEntity
+import com.akhouri.aloud.util.CrashReporter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -252,14 +254,28 @@ class Narrator(
     if (stamp != generation) return // stale: belongs to a cancelled run
 
     scope.launch {
-      mutex.withLock {
-        if (stamp != generation) return@withLock
-        when (event) {
-          is TtsEvent.Started -> onStarted(event)
-          is TtsEvent.Done -> onDone(event)
-          is TtsEvent.Failed -> onFailed(event)
-          is TtsEvent.Range -> Unit // word-level highlighting is not wired to the UI yet
+      try {
+        mutex.withLock {
+          if (stamp != generation) return@withLock
+          when (event) {
+            is TtsEvent.Started -> onStarted(event)
+            is TtsEvent.Done -> onDone(event)
+            is TtsEvent.Failed -> onFailed(event)
+            is TtsEvent.Range -> Unit // word-level highlighting is not wired to the UI yet
+          }
         }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        // Narration stops and says so, rather than the exception reaching the default
+        // handler and killing the app mid-chapter.
+        CrashReporter.record(e, "narration event ${event.utteranceId}")
+        invalidate()
+        _state.value = _state.value.copy(
+          isPlaying = false,
+          error = "Narration stopped unexpectedly (${e.javaClass.simpleName}). " +
+            "Reopen the book to carry on — your place was saved.",
+        )
       }
     }
   }

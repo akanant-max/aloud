@@ -8,7 +8,9 @@ import com.akhouri.aloud.importer.BookImporter
 import com.akhouri.aloud.playback.SleepTimer
 import com.akhouri.aloud.tts.Narrator
 import com.akhouri.aloud.tts.TtsEngine
+import com.akhouri.aloud.util.CrashReporter
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,8 +31,16 @@ class AppGraph(context: Context) {
   /**
    * Lives as long as the process. Narration has to outlast any one screen, and outlast the
    * service being rebound, so it cannot hang off either.
+   *
+   * The handler matters more than it looks: without one, a single unexpected exception
+   * anywhere in narration reaches the default handler and takes the whole app down. A failed
+   * utterance should cost the listener their place at worst, never the process.
    */
-  val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+  val scope = CoroutineScope(
+    SupervisorJob() +
+      Dispatchers.Main.immediate +
+      CoroutineExceptionHandler { _, error -> CrashReporter.record(error, "narration") },
+  )
 
   val database: AloudDatabase by lazy { AloudDatabase.build(appContext) }
 
@@ -61,6 +71,8 @@ class AloudApp : Application() {
 
   override fun onCreate() {
     super.onCreate()
+    // Installed first, so a failure during the rest of startup is still recorded.
+    CrashReporter.install(this)
     // PdfBox ships its fonts and resources as Android assets and will not parse without this.
     PDFBoxResourceLoader.init(this)
     graph = AppGraph(this)
