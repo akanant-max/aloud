@@ -1,6 +1,6 @@
 plugins {
+  // AGP 9 supplies Kotlin itself; applying kotlin.android alongside it is a fatal error.
   alias(libs.plugins.android.application)
-  alias(libs.plugins.kotlin.android)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.ksp)
 }
