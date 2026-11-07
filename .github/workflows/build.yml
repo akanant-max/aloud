@@ -27,11 +27,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee -a /tmp/build.log
 
       - name: Unit tests
         if: success() || failure()
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee -a /tmp/build.log
 
       - name: Upload APK
         if: success()
@@ -64,3 +68,21 @@ jobs:
             app/build/reports/
             app/build/outputs/logs/
           if-no-files-found: ignore
+
+      # Mirrors the failure output onto a branch of its own. Reading it over git needs no API
+      # access, so a build can be diagnosed from an environment that only has git.
+      - name: Mirror the build log to a branch
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work=$(mktemp -d)
+          cd "$work"
+          git init -q
+          # The tail is where the compiler errors are; a full Gradle log is mostly noise.
+          tail -c 300000 /tmp/build.log > build.log
+          cp -r "$GITHUB_WORKSPACE"/app/build/reports/tests . 2>/dev/null || true
+          git add -A
+          git -c user.email=ci@local -c user.name=ci commit -qm "build log for $GITHUB_SHA"
+          git push -f "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
+            HEAD:build-logs
