@@ -72,9 +72,10 @@ fun AloudTheme(
       if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     } else {
       dynamicColorScheme(
+        // The seed as primary keeps its full saturation; secondary and tertiary are derived
+        // the way Android derives them from a wallpaper.
         primary = AloudBlue,
         isDark = dark,
-        isAmoled = false,
         style = PaletteStyle.TonalSpot,
       )
     }

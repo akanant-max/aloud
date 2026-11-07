@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <style name="Theme.Aloud" parent="android:Theme.Material.DayNight.NoActionBar">
-    <item name="android:windowBackground">@android:color/transparent</item>
-    <item name="android:navigationBarColor">@android:color/transparent</item>
+  <!-- Compose draws everything; this theme only governs the window before the first frame.
+       DayNight parents come from AppCompat, which a Compose-only app does not depend on, so
+       the night variant lives in res/values-night instead. -->
+  <style name="Theme.Aloud" parent="android:Theme.Material.Light.NoActionBar">
+    <item name="android:windowBackground">?android:attr/colorBackground</item>
     <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowLightStatusBar">true</item>
   </style>
 </resources>

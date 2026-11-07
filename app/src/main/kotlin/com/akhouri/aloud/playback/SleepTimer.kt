@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -61,13 +62,11 @@ class SleepTimer(
     _state.value = State(running = true, untilEndOfChapter = true)
 
     job = scope.launch {
-      narrator.state.collect { narration ->
-        val chapterChanged = narration.chapterIndex != startingChapter
-        if (chapterChanged || (!narration.isPlaying && !narration.isPreparing)) {
-          finish()
-          return@collect
-        }
+      narrator.state.first { narration ->
+        narration.chapterIndex != startingChapter ||
+          (!narration.isPlaying && !narration.isPreparing)
       }
+      finish()
     }
   }
 

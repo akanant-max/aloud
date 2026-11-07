@@ -118,7 +118,7 @@ class TtsEngine(private val context: Context) {
           utteranceId?.let { _events.tryEmit(TtsEvent.Done(it)) }
         }
 
-        @Deprecated("Superseded by onError(String, Int)", ReplaceWith(""))
+        @Suppress("OVERRIDE_DEPRECATION")
         override fun onError(utteranceId: String?) {
           utteranceId?.let { _events.tryEmit(TtsEvent.Failed(it, TextToSpeech.ERROR)) }
         }
