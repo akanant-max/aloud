@@ -40,19 +40,23 @@ class ChunkerTest {
   }
 
   @Test
-  fun `no chunk starts or ends inside a word`() {
+  fun `no chunk boundary falls inside a word`() {
     val text = (1..50).joinToString(" ") { "antidisestablishmentarianism$it" }
     val chunks = Chunker.chunk(0, text, maxChars = 100)
 
+    assertThat(chunks).isNotEmpty()
     chunks.forEach { chunk ->
-      if (chunk.startOffset > 0) {
-        assertThat(text[chunk.startOffset - 1].isLetterOrDigit()).isFalse()
-      }
-      if (chunk.endOffset < text.length) {
-        assertThat(text[chunk.endOffset].isLetterOrDigit()).isFalse()
-      }
+      // A boundary only splits a word when the characters either side of it both belong to
+      // one. Landing on the space that follows a word is a clean break, not a split.
+      assertThat(splitsAWord(text, chunk.startOffset)).isFalse()
+      assertThat(splitsAWord(text, chunk.endOffset)).isFalse()
     }
   }
+
+  private fun splitsAWord(text: String, offset: Int): Boolean =
+    offset in 1 until text.length &&
+      text[offset - 1].isLetterOrDigit() &&
+      text[offset].isLetterOrDigit()
 
   @Test
   fun `a single sentence longer than the limit is split on words`() {
