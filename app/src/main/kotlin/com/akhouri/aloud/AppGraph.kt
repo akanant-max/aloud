@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -88,13 +89,28 @@ class AppGraph(context: Context) {
    * comes back rather than staying gone for the rest of the session.
    */
   fun keepServiceForegroundWhilePlaying() {
+    val enabled = settings.settings.map { it.mediaNotification }.distinctUntilChanged()
+    val intent = Intent(appContext, PlaybackService::class.java)
+
+    // Switching the notification off in settings takes the whole media session down with it,
+    // since Media3 shows one for as long as a session is playing.
     scope.launch {
-      narrator.state
-        .map { it.isPlaying }
+      enabled.collect { on ->
+        if (on) {
+          runCatching { appContext.startService(intent) }
+        } else {
+          runCatching { appContext.stopService(intent) }
+        }
+      }
+    }
+
+    scope.launch {
+      combine(narrator.state.map { it.isPlaying }.distinctUntilChanged(), enabled) { playing, on ->
+        playing && on
+      }
         .distinctUntilChanged()
-        .collect { playing ->
-          if (!playing) return@collect
-          val intent = Intent(appContext, PlaybackService::class.java)
+        .collect { promote ->
+          if (!promote) return@collect
           runCatching { ContextCompat.startForegroundService(appContext, intent) }
             .onFailure { CrashReporter.record(it, "promoting the playback service") }
         }

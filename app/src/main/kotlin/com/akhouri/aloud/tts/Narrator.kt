@@ -2,7 +2,9 @@ package com.akhouri.aloud.tts
 
 import android.util.Log
 import com.akhouri.aloud.data.AloudDatabase
+import com.akhouri.aloud.data.entity.BookEntity
 import com.akhouri.aloud.data.entity.ChapterEntity
+import com.akhouri.aloud.data.entity.ImportState
 import com.akhouri.aloud.data.entity.ProgressEntity
 import com.akhouri.aloud.playback.PlaybackKeepAlive
 import com.akhouri.aloud.util.CrashReporter
@@ -86,7 +88,12 @@ class Narrator(
 
   /** Loads a book and positions narration, without starting it. */
   suspend fun open(bookId: String, paragraphIndex: Int? = null, charOffset: Int = 0) {
-    mutex.withLock {
+    mutex.withLock { openLocked(bookId, paragraphIndex, charOffset) }
+  }
+
+  /** The body of [open], for callers that already hold the lock. */
+  private suspend fun openLocked(bookId: String, paragraphIndex: Int?, charOffset: Int) {
+    run {
       val book = database.bookDao().find(bookId) ?: return
       val chapters = database.chapterDao().forBook(bookId)
       val saved = database.progressDao().find(bookId)
@@ -328,8 +335,7 @@ class Narrator(
     persistProgress()
 
     if (inFlight.isEmpty() && pending.isEmpty() && endOfBook) {
-      keepAlive.release()
-      _state.value = _state.value.copy(isPlaying = false)
+      finishBook()
       return
     }
     if (_state.value.isPlaying) refill(flushFirst = false)
@@ -383,10 +389,7 @@ class Narrator(
         loadAhead(bookId)
         if (pending.isEmpty()) {
           endOfBook = true
-          if (inFlight.isEmpty()) {
-            keepAlive.release()
-            _state.value = _state.value.copy(isPlaying = false)
-          }
+          if (inFlight.isEmpty()) finishBook()
           return
         }
       }
@@ -394,6 +397,40 @@ class Narrator(
       val id = "$generation:${sequence++}"
       inFlight[id] = chunk
       engine.speak(id, chunk.text, flush = flushFirst && inFlight.size == 1)
+    }
+  }
+
+  /**
+   * The last word of a book has been spoken. A book filed in a collection hands over to the
+   * one after it, so a collection plays through like a single anthology; otherwise narration
+   * stops here.
+   */
+  private suspend fun finishBook() {
+    val next = nextInCollection()
+    if (next == null) {
+      keepAlive.release()
+      _state.value = _state.value.copy(isPlaying = false)
+      return
+    }
+    openLocked(next.id, paragraphIndex = 0, charOffset = 0)
+    if (_state.value.bookId != next.id) {
+      // The next book could not be opened; stop rather than try the same hand-over again.
+      keepAlive.release()
+      _state.value = _state.value.copy(isPlaying = false)
+      return
+    }
+    _state.value = _state.value.copy(isPlaying = true)
+    refill(flushFirst = true)
+  }
+
+  private suspend fun nextInCollection(): BookEntity? {
+    val currentId = _state.value.bookId ?: return null
+    val collectionId = database.bookDao().find(currentId)?.collectionId ?: return null
+    val books = database.bookDao().inCollection(collectionId)
+    val index = books.indexOfFirst { it.id == currentId }
+    if (index < 0) return null
+    return books.drop(index + 1).firstOrNull {
+      it.importState == ImportState.READY && it.paragraphCount > 0
     }
   }
 

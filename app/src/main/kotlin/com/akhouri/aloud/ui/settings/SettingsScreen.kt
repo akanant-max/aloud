@@ -9,6 +9,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,6 +50,7 @@ fun SettingsScreen(onBack: () -> Unit) {
   var settings by remember { mutableStateOf(Settings()) }
   var engines by remember { mutableStateOf<List<EngineInfo>>(emptyList()) }
   var voices by remember { mutableStateOf<List<String>>(emptyList()) }
+  var voicesOpen by remember { mutableStateOf(false) }
 
   LaunchedEffect(Unit) {
     settings = appGraph.settings.settings.first()
@@ -106,21 +109,73 @@ fun SettingsScreen(onBack: () -> Unit) {
       }
 
       if (voices.isNotEmpty()) {
-        Header("Voices")
-        Body("Only offline voices are listed, so narration keeps working without a connection.")
-        voices.forEach { voice ->
-          ChoiceRow(
-            label = voice,
-            selected = settings.voiceName == voice,
-            onClick = {
-              scope.launch {
-                appGraph.settings.setVoice(voice)
-                settings = appGraph.settings.settings.first()
-                appGraph.narrator.useVoice(settings.enginePackage, voice)
-              }
-            },
+        // Folded by default: an engine can offer dozens of voices, and the list would
+        // otherwise push every other setting off the screen.
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          modifier = Modifier
+            .fillMaxWidth()
+            .clickable { voicesOpen = !voicesOpen }
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        ) {
+          Column(Modifier.weight(1f)) {
+            Text("Voice", style = MaterialTheme.typography.bodyLarge)
+            Text(
+              text = settings.voiceName ?: "The engine's default",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          Icon(
+            imageVector = if (voicesOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = if (voicesOpen) "Hide the voices" else "Show the voices",
           )
         }
+        if (voicesOpen) {
+          Body("Only offline voices are listed, so narration keeps working without a connection.")
+          voices.forEach { voice ->
+            ChoiceRow(
+              label = voice,
+              selected = settings.voiceName == voice,
+              onClick = {
+                scope.launch {
+                  appGraph.settings.setVoice(voice)
+                  settings = appGraph.settings.settings.first()
+                  appGraph.narrator.useVoice(settings.enginePackage, voice)
+                }
+              },
+            )
+          }
+        }
+      }
+
+      HorizontalDivider(Modifier.padding(vertical = 8.dp))
+      Header("Playback")
+
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+      ) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+          Text("Playback notification", style = MaterialTheme.typography.bodyLarge)
+          Text(
+            text = "Off removes the notification along with the lock-screen and headset " +
+              "controls, and Android may then stop narration when the app is in the background.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        Switch(
+          checked = settings.mediaNotification,
+          onCheckedChange = { enabled ->
+            scope.launch {
+              appGraph.settings.setMediaNotification(enabled)
+              settings = appGraph.settings.settings.first()
+            }
+          },
+        )
       }
 
       HorizontalDivider(Modifier.padding(vertical = 8.dp))

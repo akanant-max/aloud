@@ -1,5 +1,6 @@
 package com.akhouri.aloud.data.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Fts4
@@ -32,6 +33,23 @@ data class BookEntity(
   val lastOpenedAt: Long? = null,
   val importState: ImportState = ImportState.PENDING,
   val importError: String? = null,
+  /** SHA-256 of the source file, so the same book is recognised wherever it is picked from. */
+  val contentHash: String? = null,
+  /** The collection this book is filed under, if any. Membership only; nothing is copied. */
+  val collectionId: Long? = null,
+  /** Play order within the collection. */
+  @ColumnInfo(defaultValue = "0") val collectionPosition: Int = 0,
+)
+
+/**
+ * A named group of books that plays through like one anthology. It holds no content of its
+ * own, so grouping books costs no storage.
+ */
+@Entity(tableName = "collections")
+data class CollectionEntity(
+  @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+  val name: String,
+  val createdAt: Long = 0L,
 )
 
 @Entity(

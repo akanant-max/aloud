@@ -1,11 +1,18 @@
 package com.akhouri.aloud.importer
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import com.akhouri.aloud.data.entity.BookFormat
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -26,11 +33,27 @@ class PdfParser : BookParser {
 
   override suspend fun parse(context: Context, uri: Uri, sink: ImportSink) {
     withContext(Dispatchers.IO) {
-      val stream = context.contentResolver.openInputStream(uri)
-        ?: throw ImportException("Could not open the file")
+      // Copied to disk first, then opened from there. Handing PdfBox the stream makes it read
+      // the entire file into memory before parsing a page, which a large textbook does not
+      // survive.
+      val cached = copyToCache(context, uri, "pdf")
+      try {
+        readDocument(context, uri, cached, sink)
+      } finally {
+        cached.delete()
+      }
+    }
+  }
 
+  private suspend fun readDocument(context: Context, uri: Uri, file: File, sink: ImportSink) {
+    run {
       val document = try {
-        stream.use { PDDocument.load(it) }
+        // Scratch space on disk rather than in the heap, so memory use stays flat however
+        // many pages there are.
+        PDDocument.load(
+          file,
+          MemoryUsageSetting.setupTempFileOnly().setTempDir(context.cacheDir),
+        )
       } catch (e: Exception) {
         throw ImportException(
           "This PDF could not be opened. It may be damaged or password-protected.",
@@ -51,6 +74,7 @@ class PdfParser : BookParser {
           title = info?.title?.takeIf { it.isNotBlank() }
             ?: displayName(context, uri)?.substringBeforeLast('.'),
           author = info?.author?.takeIf { it.isNotBlank() },
+          cover = runCatching { renderFirstPage(file) }.getOrNull(),
         )
 
         val chapterStarts = outlineByPage(doc)
@@ -122,6 +146,37 @@ class PdfParser : BookParser {
           sink.warn("$emptyPages of $pageCount pages had no text layer and were skipped.")
         }
       }
+    }
+  }
+
+  /** A PDF carries no cover of its own, so its first page stands in for one. */
+  private fun renderFirstPage(file: File): ByteArray? {
+    val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    try {
+      val renderer = PdfRenderer(descriptor)
+      try {
+        if (renderer.pageCount == 0) return null
+        val page = renderer.openPage(0)
+        try {
+          val width = COVER_WIDTH_PX
+          val height = (width.toFloat() * page.height / page.width.coerceAtLeast(1))
+            .toInt()
+            .coerceIn(1, COVER_WIDTH_PX * 3)
+          val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+          bitmap.eraseColor(Color.WHITE)
+          page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+          val out = ByteArrayOutputStream()
+          bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+          bitmap.recycle()
+          return out.toByteArray()
+        } finally {
+          page.close()
+        }
+      } finally {
+        renderer.close()
+      }
+    } finally {
+      runCatching { descriptor.close() }
     }
   }
 
@@ -206,6 +261,7 @@ class PdfParser : BookParser {
 
   private companion object {
     const val MIN_CHARS_PER_PAGE = 20
+    const val COVER_WIDTH_PX = 480
     const val MAX_PARAGRAPH_CHARS = 1500
     const val SYNTHETIC_CHAPTER_SIZE = 200
     val SENTENCE_END = Regex("(?<=[.!?])\\s+")

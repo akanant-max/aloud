@@ -1,6 +1,7 @@
 package com.akhouri.aloud.data
 
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -9,6 +10,7 @@ import androidx.room.Upsert
 import com.akhouri.aloud.data.entity.BookEntity
 import com.akhouri.aloud.data.entity.BookmarkEntity
 import com.akhouri.aloud.data.entity.ChapterEntity
+import com.akhouri.aloud.data.entity.CollectionEntity
 import com.akhouri.aloud.data.entity.ImportState
 import com.akhouri.aloud.data.entity.ParagraphEntity
 import com.akhouri.aloud.data.entity.ProgressEntity
@@ -26,8 +28,76 @@ data class SearchResult(
   val snippet: String,
 )
 
+/** A book with how far into it the listener has got, for the library list. */
+data class BookWithProgress(
+  @Embedded val book: BookEntity,
+  val progressParagraph: Int?,
+) {
+  val fraction: Float
+    get() = if (book.paragraphCount > 0) {
+      ((progressParagraph ?: 0).toFloat() / book.paragraphCount).coerceIn(0f, 1f)
+    } else {
+      0f
+    }
+}
+
+@Dao
+interface CollectionDao {
+
+  @Query("SELECT * FROM collections ORDER BY name COLLATE NOCASE")
+  fun observeAll(): Flow<List<CollectionEntity>>
+
+  @Insert
+  suspend fun insert(collection: CollectionEntity): Long
+
+  @Query("UPDATE collections SET name = :name WHERE id = :id")
+  suspend fun rename(id: Long, name: String)
+
+  @Query("DELETE FROM collections WHERE id = :id")
+  suspend fun delete(id: Long)
+}
+
 @Dao
 interface BookDao {
+
+  @Query(
+    "SELECT b.*, p.paragraphIndex AS progressParagraph FROM books b " +
+      "LEFT JOIN progress p ON p.bookId = b.id",
+  )
+  fun observeAllWithProgress(): Flow<List<BookWithProgress>>
+
+  @Query("SELECT * FROM books WHERE contentHash = :hash LIMIT 1")
+  suspend fun findByHash(hash: String): BookEntity?
+
+  @Query("SELECT * FROM books WHERE contentHash IS NULL")
+  suspend fun withoutHash(): List<BookEntity>
+
+  @Query("UPDATE books SET contentHash = :hash WHERE id = :bookId")
+  suspend fun setHash(bookId: String, hash: String)
+
+  @Query("UPDATE books SET title = :title, author = :author WHERE id = :bookId")
+  suspend fun editDetails(bookId: String, title: String, author: String?)
+
+  @Query("UPDATE books SET coverPath = :path WHERE id = :bookId")
+  suspend fun setCover(bookId: String, path: String?)
+
+  @Query(
+    "UPDATE books SET collectionId = :collectionId, collectionPosition = :position " +
+      "WHERE id = :bookId",
+  )
+  suspend fun setCollection(bookId: String, collectionId: Long?, position: Int)
+
+  @Query("SELECT * FROM books WHERE collectionId = :collectionId ORDER BY collectionPosition, title")
+  suspend fun inCollection(collectionId: Long): List<BookEntity>
+
+  @Query("UPDATE books SET collectionId = NULL, collectionPosition = 0 WHERE collectionId = :collectionId")
+  suspend fun clearCollection(collectionId: Long)
+
+  @Query(
+    "SELECT * FROM books WHERE title LIKE '%' || :text || '%' OR author LIKE '%' || :text || '%' " +
+      "ORDER BY title COLLATE NOCASE LIMIT 50",
+  )
+  suspend fun searchByName(text: String): List<BookEntity>
 
   @Query("SELECT * FROM books ORDER BY lastOpenedAt DESC, importedAt DESC")
   fun observeAll(): Flow<List<BookEntity>>

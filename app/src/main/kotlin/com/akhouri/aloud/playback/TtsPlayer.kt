@@ -113,10 +113,11 @@ class TtsPlayer(
     return Futures.immediateVoidFuture()
   }
 
-  override fun handleRelease(): ListenableFuture<*> {
-    scope.launch { narrator.stop() }
-    return Futures.immediateVoidFuture()
-  }
+  /**
+   * Nothing to stop here: narration belongs to the app, not to this adapter, and the session
+   * going away — reclaimed by the system, or switched off in settings — must not silence it.
+   */
+  override fun handleRelease(): ListenableFuture<*> = Futures.immediateVoidFuture()
 
   override fun handleSetPlaybackParameters(
     playbackParameters: PlaybackParameters,

@@ -6,10 +6,13 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.akhouri.aloud.data.entity.BookEntity
 import com.akhouri.aloud.data.entity.BookFormat
 import com.akhouri.aloud.data.entity.BookmarkEntity
 import com.akhouri.aloud.data.entity.ChapterEntity
+import com.akhouri.aloud.data.entity.CollectionEntity
 import com.akhouri.aloud.data.entity.ImportState
 import com.akhouri.aloud.data.entity.ParagraphEntity
 import com.akhouri.aloud.data.entity.ParagraphFts
@@ -42,8 +45,9 @@ object Converters {
     ProgressEntity::class,
     BookmarkEntity::class,
     SearchHistoryEntity::class,
+    CollectionEntity::class,
   ],
-  version = 1,
+  version = 2,
   exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -61,6 +65,8 @@ abstract class AloudDatabase : RoomDatabase() {
 
   abstract fun searchHistoryDao(): SearchHistoryDao
 
+  abstract fun collectionDao(): CollectionDao
+
   companion object {
 
     fun build(context: Context): AloudDatabase =
@@ -68,6 +74,25 @@ abstract class AloudDatabase : RoomDatabase() {
         // Foreign keys drive the cascade that clears a book's chapters, paragraphs, FTS rows,
         // progress and bookmarks when the book goes.
         .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
+        .addMigrations(MIGRATION_1_2)
         .build()
+
+    /**
+     * Adds duplicate detection and collections. Everything already imported stays exactly as
+     * it is; existing books simply start outside any collection.
+     */
+    val MIGRATION_1_2 = object : Migration(1, 2) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `books` ADD COLUMN `contentHash` TEXT")
+        db.execSQL("ALTER TABLE `books` ADD COLUMN `collectionId` INTEGER")
+        db.execSQL("ALTER TABLE `books` ADD COLUMN `collectionPosition` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL(
+          "CREATE TABLE IF NOT EXISTS `collections` (" +
+            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`name` TEXT NOT NULL, " +
+            "`createdAt` INTEGER NOT NULL)",
+        )
+      }
+    }
   }
 }

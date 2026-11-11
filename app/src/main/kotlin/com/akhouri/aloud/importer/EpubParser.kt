@@ -132,7 +132,7 @@ class EpubParser : BookParser {
     var ncxId: String? = null
 
     // id -> href, plus the hrefs of items flagged as cover image or navigation document.
-    val manifest = HashMap<String, String>()
+    val manifest = LinkedHashMap<String, String>()
     val manifestMedia = HashMap<String, String>()
     val spineIds = ArrayList<String>()
 
@@ -191,6 +191,10 @@ class EpubParser : BookParser {
         ?: manifest.entries.firstOrNull { (id, href) ->
           manifestMedia[id]?.startsWith("image/") == true &&
             (id.contains("cover", true) || href.contains("cover", true))
+        }?.value
+        // Failing that, the first image the book declares is usually its cover.
+        ?: manifest.entries.firstOrNull { (id, _) ->
+          manifestMedia[id]?.startsWith("image/") == true
         }?.value
     }
 

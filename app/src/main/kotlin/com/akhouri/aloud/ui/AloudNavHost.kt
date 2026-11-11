@@ -32,6 +32,7 @@ fun AloudNavHost(navController: NavHostController = rememberNavController()) {
     composable(Routes.LIBRARY) {
       LibraryScreen(
         onOpenBook = { navController.navigate(Routes.book(it)) },
+        onOpenReader = { navController.navigate(Routes.reader(it)) },
         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
       )
     }

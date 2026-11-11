@@ -14,6 +14,10 @@ import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { FollowSystem, Light, Dark }
 
+enum class LibrarySort { Recent, Title, Author, Added, Progress }
+
+enum class LibraryView { List, Grid }
+
 data class Settings(
   val speechRate: Float = 1.0f,
   val pitch: Float = 1.0f,
@@ -23,6 +27,11 @@ data class Settings(
   val pureBlack: Boolean = false,
   /** Paragraphs a rewind or fast-forward moves by. */
   val skipParagraphs: Int = 1,
+  val librarySort: LibrarySort = LibrarySort.Recent,
+  val librarySortReversed: Boolean = false,
+  val libraryView: LibraryView = LibraryView.List,
+  /** Whether the media notification, and the lock-screen and headset controls, are on. */
+  val mediaNotification: Boolean = true,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
@@ -40,6 +49,14 @@ class SettingsStore(private val context: Context) {
       } ?: ThemeMode.FollowSystem,
       pureBlack = prefs[PURE_BLACK] ?: false,
       skipParagraphs = prefs[SKIP_PARAGRAPHS] ?: 1,
+      librarySort = prefs[LIBRARY_SORT]?.let { name ->
+        runCatching { LibrarySort.valueOf(name) }.getOrNull()
+      } ?: LibrarySort.Recent,
+      librarySortReversed = prefs[LIBRARY_SORT_REVERSED] ?: false,
+      libraryView = prefs[LIBRARY_VIEW]?.let { name ->
+        runCatching { LibraryView.valueOf(name) }.getOrNull()
+      } ?: LibraryView.List,
+      mediaNotification = prefs[MEDIA_NOTIFICATION] ?: true,
     )
   }
 
@@ -61,6 +78,15 @@ class SettingsStore(private val context: Context) {
 
   suspend fun setSkipParagraphs(count: Int) = edit { it[SKIP_PARAGRAPHS] = count.coerceIn(1, 20) }
 
+  suspend fun setLibrarySort(sort: LibrarySort, reversed: Boolean) = edit {
+    it[LIBRARY_SORT] = sort.name
+    it[LIBRARY_SORT_REVERSED] = reversed
+  }
+
+  suspend fun setLibraryView(view: LibraryView) = edit { it[LIBRARY_VIEW] = view.name }
+
+  suspend fun setMediaNotification(enabled: Boolean) = edit { it[MEDIA_NOTIFICATION] = enabled }
+
   private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
     context.dataStore.edit(block)
   }
@@ -73,5 +99,9 @@ class SettingsStore(private val context: Context) {
     val THEME = stringPreferencesKey("theme_mode")
     val PURE_BLACK = booleanPreferencesKey("pure_black")
     val SKIP_PARAGRAPHS = intPreferencesKey("skip_paragraphs")
+    val LIBRARY_SORT = stringPreferencesKey("library_sort")
+    val LIBRARY_SORT_REVERSED = booleanPreferencesKey("library_sort_reversed")
+    val LIBRARY_VIEW = stringPreferencesKey("library_view")
+    val MEDIA_NOTIFICATION = booleanPreferencesKey("media_notification")
   }
 }

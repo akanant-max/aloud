@@ -6,11 +6,11 @@ import android.net.Uri
 import android.util.Log
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.entity.BookEntity
-import com.akhouri.aloud.data.entity.BookFormat
 import com.akhouri.aloud.data.entity.ChapterEntity
 import com.akhouri.aloud.data.entity.ImportState
 import com.akhouri.aloud.data.entity.ParagraphEntity
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -49,21 +49,38 @@ class BookImporter(
 
     persistPermission(uri)
 
-    // Re-importing the same file replaces it rather than making a duplicate.
+    // The same file can be reached through different pickers and folders, each handing over a
+    // different address for it, so identity is decided by what is in the file.
+    val hash = runCatching { hashOf(uri) }.getOrNull()
+    backfillHashes()
+
     val existing = database.bookDao().findByUri(uri.toString())
+      ?: hash?.let { database.bookDao().findByHash(it) }
+
+    // Only a book whose earlier import failed may be imported again, as a retry.
+    if (existing != null && existing.importState != ImportState.FAILED) {
+      return@withContext Result.failure(
+        ImportException("\u201C${existing.title}\u201D is already in your library"),
+      )
+    }
+
     val bookId = existing?.id ?: UUID.randomUUID().toString()
     if (existing != null) clearContent(bookId)
 
-    val fallbackTitle = fileName.substringBeforeLast('.').ifBlank { "Untitled" }
+    val fallbackTitle = TitleCleaner.fromFileName(fileName)
+    val base = existing ?: BookEntity(
+      id = bookId,
+      uri = uri.toString(),
+      title = fallbackTitle,
+      importedAt = System.currentTimeMillis(),
+    )
     database.bookDao().upsert(
-      BookEntity(
-        id = bookId,
+      base.copy(
         uri = uri.toString(),
-        title = existing?.title ?: fallbackTitle,
         format = parser.format,
-        importedAt = existing?.importedAt ?: System.currentTimeMillis(),
-        lastOpenedAt = existing?.lastOpenedAt,
+        contentHash = hash,
         importState = ImportState.IMPORTING,
+        importError = null,
       ),
     )
 
@@ -75,12 +92,44 @@ class BookImporter(
     } catch (e: CancellationException) {
       database.bookDao().delete(bookId)
       throw e
+    } catch (e: OutOfMemoryError) {
+      // Not an Exception, so it would otherwise pass every handler and end the process.
+      Log.w(TAG, "Out of memory importing $fileName", e)
+      val message = "This file is too large for this phone's memory to import."
+      runCatching { clearContent(bookId) }
+      database.bookDao().updateImportState(bookId, ImportState.FAILED, message)
+      Result.failure(ImportException(message))
     } catch (e: Exception) {
       Log.w(TAG, "Import failed for $fileName", e)
       val message = (e as? ImportException)?.message
         ?: "This file could not be read (${e.javaClass.simpleName})"
       database.bookDao().updateImportState(bookId, ImportState.FAILED, message)
       Result.failure(ImportException(message, e))
+    }
+  }
+
+  private fun hashOf(uri: Uri): String? {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val stream = context.contentResolver.openInputStream(uri) ?: return null
+    stream.use { input ->
+      val buffer = ByteArray(64 * 1024)
+      while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        digest.update(buffer, 0, read)
+      }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+  }
+
+  /**
+   * Books imported before duplicate detection existed have no hash yet. Filling them in here
+   * means they are recognised too; a book whose file has since gone is simply skipped.
+   */
+  private suspend fun backfillHashes() {
+    database.bookDao().withoutHash().forEach { book ->
+      val hash = runCatching { hashOf(Uri.parse(book.uri)) }.getOrNull()
+      if (hash != null) database.bookDao().setHash(book.id, hash)
     }
   }
 
@@ -127,7 +176,7 @@ class BookImporter(
       language: String?,
       cover: ByteArray?,
     ) {
-      this.title = title?.trim()?.takeIf { it.isNotEmpty() }
+      this.title = title?.let(TitleCleaner::clean)?.takeIf { it.isNotEmpty() }
       this.author = author?.trim()?.takeIf { it.isNotEmpty() }
       this.language = language?.trim()?.takeIf { it.isNotEmpty() }
       if (cover != null && cover.isNotEmpty()) {
@@ -177,19 +226,16 @@ class BookImporter(
       database.chapterDao().insertAll(chapters)
 
       val row = database.bookDao().find(bookId)
+        ?: throw ImportException("The book was removed while it was being imported")
+      // Copied from the stored row so that anything set elsewhere survives a retry.
       database.bookDao().upsert(
-        BookEntity(
-          id = bookId,
-          uri = row?.uri.orEmpty(),
+        row.copy(
           title = title ?: fallbackTitle,
           author = author,
-          format = row?.format ?: BookFormat.UNKNOWN,
           language = language,
           coverPath = coverPath,
           chapterCount = chapters.size,
           paragraphCount = paragraphIndex,
-          importedAt = row?.importedAt ?: System.currentTimeMillis(),
-          lastOpenedAt = row?.lastOpenedAt,
           importState = ImportState.READY,
           // Warnings are advisory, not a failure: the book is readable, some of it was skipped.
           importError = warnings.takeIf { it.isNotEmpty() }?.joinToString("\n"),
