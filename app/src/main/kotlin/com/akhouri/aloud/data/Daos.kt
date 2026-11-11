@@ -69,6 +69,16 @@ interface BookDao {
   )
   fun observeAllWithProgress(): Flow<List<BookWithProgress>>
 
+  /**
+   * An import that was under way when the app last stopped can never finish. Marking it
+   * failed is what lets the same file be added again.
+   */
+  @Query(
+    "UPDATE books SET importState = 'FAILED', importError = :message " +
+      "WHERE importState IN ('IMPORTING', 'PENDING')",
+  )
+  suspend fun failInterrupted(message: String)
+
   @Query("SELECT * FROM books WHERE contentHash = :hash LIMIT 1")
   suspend fun findByHash(hash: String): BookEntity?
 

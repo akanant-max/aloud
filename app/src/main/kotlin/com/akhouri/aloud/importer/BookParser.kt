@@ -3,6 +3,9 @@ package com.akhouri.aloud.importer
 import android.content.Context
 import android.net.Uri
 import com.akhouri.aloud.data.entity.BookFormat
+import java.util.concurrent.Executors
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.asCoroutineDispatcher
 
 /**
  * Everything a parser reports about a book, pushed as it is found rather than returned in one
@@ -29,6 +32,17 @@ interface ImportSink {
    * open, a page with no text layer. Collected and shown on the book rather than thrown away.
    */
   suspend fun warn(message: String)
+}
+
+/**
+ * Where heavy parsing runs. PDF structures nest deeply and the parser walks them recursively,
+ * which overflows the small stack an ordinary background thread is given; this one thread has
+ * a far larger one. Being a single thread also keeps imports strictly one at a time.
+ */
+object ImportThreads {
+  val deepStack: CoroutineDispatcher = Executors.newSingleThreadExecutor { task ->
+    Thread(null, task, "aloud-import", 64L * 1024 * 1024).apply { isDaemon = true }
+  }.asCoroutineDispatcher()
 }
 
 /** Thrown when a file cannot be read as a book at all. */

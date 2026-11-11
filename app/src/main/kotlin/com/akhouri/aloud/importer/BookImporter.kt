@@ -100,18 +100,21 @@ class BookImporter(
     } catch (e: CancellationException) {
       database.bookDao().delete(bookId)
       throw e
-    } catch (e: OutOfMemoryError) {
-      // Not an Exception, so it would otherwise pass every handler and end the process.
-      Log.w(TAG, "Out of memory importing $fileName", e)
-      val message = "This file is too large for this phone's memory to import."
-      runCatching { clearContent(bookId) }
-      database.bookDao().updateImportState(bookId, ImportState.FAILED, message)
-      Result.failure(ImportException(message))
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
+      // Throwable, not Exception: running out of memory or stack is an Error, and would
+      // otherwise pass every handler and end the process along with the rest of the batch.
       Log.w(TAG, "Import failed for $fileName", e)
-      val message = (e as? ImportException)?.message
-        ?: "This file could not be read (${e.javaClass.simpleName})"
-      database.bookDao().updateImportState(bookId, ImportState.FAILED, message)
+      val message = when (e) {
+        is ImportException -> e.message ?: "This file could not be read"
+        is OutOfMemoryError -> "This file is too large for this phone's memory to import."
+        is StackOverflowError -> "This file is built too intricately to be read."
+        else -> {
+          val where = e.stackTrace.firstOrNull()?.let { " at ${it.fileName}:${it.lineNumber}" }
+          "This file could not be read (${e.javaClass.simpleName}${where.orEmpty()})"
+        }
+      }
+      runCatching { clearContent(bookId) }
+      runCatching { database.bookDao().updateImportState(bookId, ImportState.FAILED, message) }
       Result.failure(ImportException(message, e))
     }
   }

@@ -7,6 +7,7 @@ import androidx.core.content.ContextCompat
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.SettingsStore
 import com.akhouri.aloud.importer.BookImporter
+import com.akhouri.aloud.importer.ImportQueue
 import com.akhouri.aloud.playback.PlaybackKeepAlive
 import com.akhouri.aloud.playback.PlaybackService
 import com.akhouri.aloud.playback.SleepTimer
@@ -56,6 +57,8 @@ class AppGraph(context: Context) {
 
   val importer: BookImporter by lazy { BookImporter(appContext, database) }
 
+  val importQueue: ImportQueue by lazy { ImportQueue(importer, database, scope) }
+
   val ttsEngine: TtsEngine by lazy { TtsEngine(appContext) }
 
   val keepAlive: PlaybackKeepAlive by lazy { PlaybackKeepAlive(appContext) }
@@ -63,6 +66,13 @@ class AppGraph(context: Context) {
   val narrator: Narrator by lazy { Narrator(ttsEngine, database, keepAlive, scope) }
 
   val sleepTimer: SleepTimer by lazy { SleepTimer(narrator, scope) }
+
+  /** Nothing can be mid-import at startup, so anything marked that way was cut off. */
+  fun recoverInterruptedImports() {
+    scope.launch {
+      database.bookDao().failInterrupted("The import was interrupted. Add the file again to retry.")
+    }
+  }
 
   /** Applies saved voice settings once, at startup, before anything is played. */
   fun restoreSettings() {
@@ -140,6 +150,7 @@ class AloudApp : Application() {
     // PdfBox ships its fonts and resources as Android assets and will not parse without this.
     PDFBoxResourceLoader.init(this)
     graph = AppGraph(this)
+    graph.recoverInterruptedImports()
     graph.restoreSettings()
     graph.keepServiceForegroundWhilePlaying()
   }

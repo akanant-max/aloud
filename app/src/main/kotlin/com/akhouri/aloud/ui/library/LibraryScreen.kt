@@ -72,6 +72,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -123,10 +125,12 @@ fun LibraryScreen(
   val settings by remember { appGraph.settings.settings }
     .collectAsStateWithLifecycle(initialValue = Settings())
 
-  var importing by remember { mutableStateOf(false) }
+  val waitingImports by appGraph.importQueue.waiting.collectAsStateWithLifecycle()
   var addMenuOpen by remember { mutableStateOf(false) }
   var sortMenuOpen by remember { mutableStateOf(false) }
   var query by rememberSaveable { mutableStateOf("") }
+  var searchOpen by rememberSaveable { mutableStateOf(false) }
+  val searchFocus = remember { FocusRequester() }
   var openCollectionId by rememberSaveable { mutableStateOf<Long?>(null) }
 
   var editing by remember { mutableStateOf<BookEntity?>(null) }
@@ -144,7 +148,7 @@ fun LibraryScreen(
   var searched by remember { mutableStateOf(false) }
 
   val openCollection = collections.firstOrNull { it.id == openCollectionId }
-  val searching = query.trim().length >= 2
+  val searching = searchOpen && query.trim().length >= 2
 
   // A book whose collection has been deleted counts as loose again.
   val knownCollectionIds = collections.map { it.id }.toSet()
@@ -164,12 +168,19 @@ fun LibraryScreen(
   val selectedBooks = visibleBooks.map { it.book }.filter { it.id in selected }
   val selecting = selectedBooks.isNotEmpty()
 
-  BackHandler(enabled = selecting || query.isNotEmpty() || openCollection != null) {
+  BackHandler(enabled = selecting || searchOpen || openCollection != null) {
     when {
       selecting -> selected = emptySet()
-      query.isNotEmpty() -> query = ""
+      searchOpen -> {
+        searchOpen = false
+        query = ""
+      }
       else -> openCollectionId = null
     }
+  }
+
+  LaunchedEffect(searchOpen) {
+    if (searchOpen) runCatching { searchFocus.requestFocus() }
   }
 
   // Debounced, and it covers both the names of books and every word inside them.
@@ -189,25 +200,14 @@ fun LibraryScreen(
     searched = true
   }
 
-  suspend fun importAll(uris: List<Uri>) {
-    if (uris.isEmpty()) return
-    importing = true
-    var added = 0
-    uris.forEach { uri ->
-      val result = appGraph.importer.import(uri)
-      if (result.isSuccess) {
-        added++
-        // Imported from inside a collection, a book is filed there straight away.
-        openCollection?.let { target ->
-          val position = (bookDao.inCollection(target.id).maxOfOrNull { it.collectionPosition } ?: -1) + 1
-          result.getOrNull()?.let { bookDao.setCollection(it, target.id, position) }
-        }
-      } else {
-        snackbars.showSnackbar(result.exceptionOrNull()?.message ?: "One file could not be imported")
-      }
-    }
-    importing = false
-    if (added > 1) snackbars.showSnackbar("Imported $added books")
+  // Imports belong to the app, not to this screen, so they carry on if the screen is left.
+  val importing = waitingImports > 0
+  LaunchedEffect(Unit) {
+    appGraph.importQueue.messages.collect { message -> snackbars.showSnackbar(message) }
+  }
+
+  fun importAll(uris: List<Uri>) {
+    appGraph.importQueue.enqueue(uris, openCollection?.id)
   }
 
   suspend fun moveTo(book: BookEntity, collectionId: Long?) {
@@ -237,7 +237,7 @@ fun LibraryScreen(
 
   val pickFiles = rememberLauncherForActivityResult(
     ActivityResultContracts.OpenMultipleDocuments(),
-  ) { uris -> scope.launch { importAll(uris) } }
+  ) { uris -> importAll(uris) }
 
   val pickFolder = rememberLauncherForActivityResult(
     ActivityResultContracts.OpenDocumentTree(),
@@ -322,7 +322,20 @@ fun LibraryScreen(
               IconButton(onClick = { confirmingRemoval = true }) {
                 Icon(Icons.Default.Delete, contentDescription = "Remove the selection from the library")
               }
-            } else if (openCollection == null) {
+            } else {
+              IconButton(
+                onClick = {
+                  searchOpen = !searchOpen
+                  if (!searchOpen) query = ""
+                },
+              ) {
+                Icon(
+                  imageVector = if (searchOpen) Icons.Default.Close else Icons.Default.Search,
+                  contentDescription = if (searchOpen) "Close the search" else "Search",
+                )
+              }
+            }
+            if (!selecting && openCollection == null) {
               IconButton(onClick = { sortMenuOpen = true }) {
                 Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
               }
@@ -375,7 +388,8 @@ fun LibraryScreen(
             }
           },
         )
-        OutlinedTextField(
+        // The field only takes up room while a search is under way.
+        if (searchOpen && !selecting) OutlinedTextField(
           value = query,
           onValueChange = { query = it },
           placeholder = { Text("Search books and what is inside them") },
@@ -389,7 +403,11 @@ fun LibraryScreen(
           },
           singleLine = true,
           shape = RoundedCornerShape(28.dp),
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 8.dp)
+            .focusRequester(searchFocus),
         )
       }
     },

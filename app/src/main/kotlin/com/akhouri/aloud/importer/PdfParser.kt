@@ -13,7 +13,6 @@ import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOut
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.ByteArrayOutputStream
 import java.io.File
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
@@ -32,7 +31,7 @@ class PdfParser : BookParser {
     mimeType == "application/pdf" || fileName.endsWith(".pdf", ignoreCase = true)
 
   override suspend fun parse(context: Context, uri: Uri, sink: ImportSink) {
-    withContext(Dispatchers.IO) {
+    withContext(ImportThreads.deepStack) {
       // Copied to disk first, then opened from there. Handing PdfBox the stream makes it read
       // the entire file into memory before parsing a page, which a large textbook does not
       // survive.
@@ -46,106 +45,126 @@ class PdfParser : BookParser {
   }
 
   private suspend fun readDocument(context: Context, uri: Uri, file: File, sink: ImportSink) {
-    run {
-      val document = try {
-        // Scratch space on disk rather than in the heap, so memory use stays flat however
-        // many pages there are.
-        PDDocument.load(
-          file,
-          MemoryUsageSetting.setupTempFileOnly().setTempDir(context.cacheDir),
-        )
-      } catch (e: Exception) {
+    // Scratch space on disk rather than in the heap, so memory use stays flat however many
+    // pages there are.
+    fun open(): PDDocument = try {
+      PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly().setTempDir(context.cacheDir))
+    } catch (e: Exception) {
+      throw ImportException(
+        "This PDF could not be opened. It may be damaged or password-protected.",
+        e,
+      )
+    }
+
+    fun newStripper() = PDFTextStripper().apply {
+      // Reads columns in the right order instead of straight across the page.
+      sortByPosition = true
+    }
+
+    var document = open()
+    try {
+      if (document.isEncrypted) {
+        throw ImportException("This PDF is password-protected and cannot be read.")
+      }
+
+      val pageCount = document.numberOfPages
+      if (pageCount == 0) throw ImportException("This PDF has no pages")
+
+      val info = document.documentInformation
+      sink.metadata(
+        title = info?.title?.takeIf { it.isNotBlank() }
+          ?: displayName(context, uri)?.substringBeforeLast('.'),
+        author = info?.author?.takeIf { it.isNotBlank() },
+        cover = runCatching { renderFirstPage(file) }.getOrNull(),
+      )
+
+      val chapterStarts = runCatching { outlineByPage(document) }.getOrDefault(emptyMap())
+      var stripper = newStripper()
+
+      var openChapter = false
+      var emptyPages = 0
+      var paragraphsInChapter = 0
+      var pagesSinceOpen = 0
+
+      for (page in 1..pageCount) {
+        coroutineContext.ensureActive()
+
+        // The parser caches fonts and page resources as it goes and never lets them go, so a
+        // long book is read in stretches with a fresh document for each.
+        if (pagesSinceOpen >= REOPEN_EVERY_PAGES) {
+          runCatching { document.close() }
+          document = open()
+          stripper = newStripper()
+          pagesSinceOpen = 0
+        }
+        pagesSinceOpen++
+
+        val raw = try {
+          stripper.startPage = page
+          stripper.endPage = page
+          stripper.getText(document)
+        } catch (e: Throwable) {
+          sink.warn("Page $page could not be read")
+          emptyPages++
+          if (e is Error) {
+            // Out of memory or out of stack on this page. The document is in an unknown
+            // state, so it is thrown away and reading carries on from the next page.
+            runCatching { document.close() }
+            System.gc()
+            document = open()
+            stripper = newStripper()
+            pagesSinceOpen = 0
+          }
+          continue
+        }
+
+        if (raw.count { !it.isWhitespace() } < MIN_CHARS_PER_PAGE) {
+          emptyPages++
+          continue
+        }
+
+        chapterStarts[page]?.let { title ->
+          sink.startChapter(title)
+          openChapter = true
+          paragraphsInChapter = 0
+        }
+
+        val paragraphs = splitParagraphs(raw)
+        if (paragraphs.isEmpty()) {
+          emptyPages++
+          continue
+        }
+
+        // Either nothing has opened a chapter yet, or an outline-less run has grown long
+        // enough that the chapter list needs another entry to stay navigable.
+        if (!openChapter || paragraphsInChapter >= SYNTHETIC_CHAPTER_SIZE) {
+          sink.startChapter(null)
+          openChapter = true
+          paragraphsInChapter = 0
+        }
+
+        paragraphs.forEach {
+          sink.paragraph(it, page = page)
+          paragraphsInChapter++
+        }
+      }
+
+      if (!openChapter) {
         throw ImportException(
-          "This PDF could not be opened. It may be damaged or password-protected.",
-          e,
+          if (emptyPages == pageCount) {
+            "This PDF has no text layer — the pages are images. It would need OCR before it " +
+              "can be read aloud."
+          } else {
+            "No readable text was found in this PDF"
+          },
         )
       }
 
-      document.use { doc ->
-        if (doc.isEncrypted) {
-          throw ImportException("This PDF is password-protected and cannot be read.")
-        }
-
-        val pageCount = doc.numberOfPages
-        if (pageCount == 0) throw ImportException("This PDF has no pages")
-
-        val info = doc.documentInformation
-        sink.metadata(
-          title = info?.title?.takeIf { it.isNotBlank() }
-            ?: displayName(context, uri)?.substringBeforeLast('.'),
-          author = info?.author?.takeIf { it.isNotBlank() },
-          cover = runCatching { renderFirstPage(file) }.getOrNull(),
-        )
-
-        val chapterStarts = outlineByPage(doc)
-        val stripper = PDFTextStripper().apply {
-          // Reads columns in the right order instead of straight across the page.
-          sortByPosition = true
-        }
-
-        var openChapter = false
-        var emptyPages = 0
-        var paragraphsInChapter = 0
-
-        for (page in 1..pageCount) {
-          coroutineContext.ensureActive()
-
-          val raw = try {
-            stripper.startPage = page
-            stripper.endPage = page
-            stripper.getText(doc)
-          } catch (e: Exception) {
-            sink.warn("Page $page could not be read")
-            emptyPages++
-            continue
-          }
-
-          if (raw.count { !it.isWhitespace() } < MIN_CHARS_PER_PAGE) {
-            emptyPages++
-            continue
-          }
-
-          chapterStarts[page]?.let { title ->
-            sink.startChapter(title)
-            openChapter = true
-            paragraphsInChapter = 0
-          }
-
-          val paragraphs = splitParagraphs(raw)
-          if (paragraphs.isEmpty()) {
-            emptyPages++
-            continue
-          }
-
-          // Either nothing has opened a chapter yet, or an outline-less run has grown long
-          // enough that the chapter list needs another entry to stay navigable.
-          if (!openChapter || paragraphsInChapter >= SYNTHETIC_CHAPTER_SIZE) {
-            sink.startChapter(null)
-            openChapter = true
-            paragraphsInChapter = 0
-          }
-
-          paragraphs.forEach {
-            sink.paragraph(it, page = page)
-            paragraphsInChapter++
-          }
-        }
-
-        if (!openChapter) {
-          throw ImportException(
-            if (emptyPages == pageCount) {
-              "This PDF has no text layer — the pages are images. It would need OCR before it " +
-                "can be read aloud."
-            } else {
-              "No readable text was found in this PDF"
-            },
-          )
-        }
-
-        if (emptyPages > pageCount / 2) {
-          sink.warn("$emptyPages of $pageCount pages had no text layer and were skipped.")
-        }
+      if (emptyPages > pageCount / 2) {
+        sink.warn("$emptyPages of $pageCount pages had no text layer and were skipped.")
       }
+    } finally {
+      runCatching { document.close() }
     }
   }
 
@@ -262,6 +281,7 @@ class PdfParser : BookParser {
   private companion object {
     const val MIN_CHARS_PER_PAGE = 20
     const val COVER_WIDTH_PX = 480
+    const val REOPEN_EVERY_PAGES = 120
     const val MAX_PARAGRAPH_CHARS = 1500
     const val SYNTHETIC_CHAPTER_SIZE = 200
     val SENTENCE_END = Regex("(?<=[.!?])\\s+")
