@@ -8,7 +8,7 @@ import androidx.room.FtsOptions
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class BookFormat { EPUB, PDF, TXT, UNKNOWN }
+enum class BookFormat { EPUB, PDF, TXT, MOBI, FB2, HTML, DOCX, UNKNOWN }
 
 /**
  * How far an import has got. A book is only readable once it reaches [READY]; everything else is

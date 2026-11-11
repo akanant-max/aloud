@@ -27,7 +27,15 @@ class BookImporter(
   private val database: AloudDatabase,
 ) {
 
-  private val parsers: List<BookParser> = listOf(EpubParser(), PdfParser(), TxtParser())
+  private val parsers: List<BookParser> = listOf(
+    EpubParser(),
+    PdfParser(),
+    MobiParser(),
+    Fb2Parser(),
+    DocxParser(),
+    HtmlParser(),
+    TxtParser(),
+  )
 
   /** Whether any parser recognises this file, used to filter a folder scan. */
   fun isSupported(mimeType: String?, fileName: String): Boolean =

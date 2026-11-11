@@ -237,7 +237,7 @@ fun LibraryScreen(
           .orEmpty()
       }
       if (found.isEmpty()) {
-        snackbars.showSnackbar("No EPUB, PDF or text files in that folder")
+        snackbars.showSnackbar("No books Aloud can read in that folder")
       } else {
         importAll(found)
       }
@@ -367,7 +367,9 @@ fun LibraryScreen(
             leadingIcon = { Icon(Icons.Default.InsertDriveFile, null) },
             onClick = {
               addMenuOpen = false
-              pickFiles.launch(arrayOf("application/epub+zip", "application/pdf", "text/plain"))
+              // Kindle files rarely report a useful type, so the picker shows everything and the
+              // importer decides what it can read.
+              pickFiles.launch(arrayOf("*/*"))
             },
           )
           DropdownMenuItem(
@@ -435,7 +437,7 @@ fun LibraryScreen(
 
       books.isEmpty() && collections.isEmpty() -> EmptyState(
         title = "No books yet",
-        subtitle = "Tap + to add an EPUB, a PDF with selectable text, or a plain text file.",
+        subtitle = "Tap + to add a book: EPUB, PDF, Kindle (MOBI, AZW3), FB2, Word, HTML or plain text.",
         modifier = Modifier.padding(padding),
       )
 

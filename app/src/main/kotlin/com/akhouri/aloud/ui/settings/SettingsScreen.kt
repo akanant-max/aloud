@@ -224,7 +224,8 @@ fun SettingsScreen(onBack: () -> Unit) {
       HorizontalDivider(Modifier.padding(vertical = 8.dp))
       Header("About")
       Body(
-        "Aloud reads EPUB, plain text, and PDFs that have a text layer. Everything happens on " +
+        "Aloud reads EPUB, PDF with a text layer, Kindle books without DRM (MOBI, AZW3), FB2, " +
+          "Word, HTML and plain text. Every book is converted to plain text on import, on " +
           "this device — no account, no server, no connection needed once a voice is installed.",
       )
     }
