@@ -399,8 +399,8 @@ fun LibraryScreen(
         onOpen = { if (book.importState == ImportState.READY) onOpenBook(book.id) },
         onEdit = { editing = book },
         onMove = { moving = book },
-        onEarlier = if (openCollection != null) { scope.launch { shift(book, -1) }; Unit } else null,
-        onLater = if (openCollection != null) { scope.launch { shift(book, 1) }; Unit } else null,
+        onEarlier = (fun() { scope.launch { shift(book, -1) } }).takeIf { openCollection != null },
+        onLater = (fun() { scope.launch { shift(book, 1) } }).takeIf { openCollection != null },
         onRemove = { scope.launch { remove(book) }; Unit },
       )
     }
