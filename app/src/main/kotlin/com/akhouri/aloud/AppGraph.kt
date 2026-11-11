@@ -5,6 +5,7 @@ import android.content.Context
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.SettingsStore
 import com.akhouri.aloud.importer.BookImporter
+import com.akhouri.aloud.playback.PlaybackKeepAlive
 import com.akhouri.aloud.playback.SleepTimer
 import com.akhouri.aloud.tts.Narrator
 import com.akhouri.aloud.tts.TtsEngine
@@ -50,7 +51,9 @@ class AppGraph(context: Context) {
 
   val ttsEngine: TtsEngine by lazy { TtsEngine(appContext) }
 
-  val narrator: Narrator by lazy { Narrator(ttsEngine, database, scope) }
+  val keepAlive: PlaybackKeepAlive by lazy { PlaybackKeepAlive(appContext) }
+
+  val narrator: Narrator by lazy { Narrator(ttsEngine, database, keepAlive, scope) }
 
   val sleepTimer: SleepTimer by lazy { SleepTimer(narrator, scope) }
 

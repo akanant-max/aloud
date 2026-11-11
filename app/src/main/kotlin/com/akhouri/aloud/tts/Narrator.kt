@@ -4,6 +4,7 @@ import android.util.Log
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.entity.ChapterEntity
 import com.akhouri.aloud.data.entity.ProgressEntity
+import com.akhouri.aloud.playback.PlaybackKeepAlive
 import com.akhouri.aloud.util.CrashReporter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +49,7 @@ data class NarrationState(
 class Narrator(
   private val engine: TtsEngine,
   private val database: AloudDatabase,
+  private val keepAlive: PlaybackKeepAlive,
   private val scope: CoroutineScope,
 ) {
 
@@ -73,6 +75,11 @@ class Narrator(
     scope.launch {
       engine.events.collect(::onEngineEvent)
     }
+
+    // A call coming in, another app taking over the speakers, or headphones being pulled out
+    // all pause narration rather than talking over whatever took priority.
+    keepAlive.onInterrupted = { scope.launch { pause() } }
+    keepAlive.onRegained = { scope.launch { play() } }
   }
 
   // ---- public control ---------------------------------------------------------------------
@@ -128,6 +135,10 @@ class Narrator(
       engine.setSpeechRate(current.speechRate)
       engine.setPitch(current.pitch)
 
+      // Tells the system this app is playing media, and keeps the CPU awake so the next
+      // utterance can be queued with the screen off.
+      keepAlive.acquire()
+
       consecutiveFailures = 0
       endOfBook = false
       _state.value = _state.value.copy(isPreparing = false, isPlaying = true)
@@ -140,6 +151,7 @@ class Narrator(
       if (!_state.value.isPlaying) return
       // Position already points at the oldest unfinished chunk, so nothing is recomputed here.
       invalidate()
+      keepAlive.release()
       _state.value = _state.value.copy(isPlaying = false)
       persistProgress()
     }
@@ -152,6 +164,7 @@ class Narrator(
   suspend fun stop() {
     mutex.withLock {
       invalidate()
+      keepAlive.release()
       _state.value = _state.value.copy(isPlaying = false)
       persistProgress()
     }
@@ -271,6 +284,7 @@ class Narrator(
         // handler and killing the app mid-chapter.
         CrashReporter.record(e, "narration event ${event.utteranceId}")
         invalidate()
+        keepAlive.release()
         _state.value = _state.value.copy(
           isPlaying = false,
           error = "Narration stopped unexpectedly (${e.javaClass.simpleName}). " +
@@ -314,6 +328,7 @@ class Narrator(
     persistProgress()
 
     if (inFlight.isEmpty() && pending.isEmpty() && endOfBook) {
+      keepAlive.release()
       _state.value = _state.value.copy(isPlaying = false)
       return
     }
@@ -327,6 +342,7 @@ class Narrator(
 
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       invalidate()
+      keepAlive.release()
       _state.value = _state.value.copy(
         isPlaying = false,
         error = "The speech engine kept failing. Check its voice data is installed, then try again.",
@@ -367,7 +383,10 @@ class Narrator(
         loadAhead(bookId)
         if (pending.isEmpty()) {
           endOfBook = true
-          if (inFlight.isEmpty()) _state.value = _state.value.copy(isPlaying = false)
+          if (inFlight.isEmpty()) {
+            keepAlive.release()
+            _state.value = _state.value.copy(isPlaying = false)
+          }
           return
         }
       }
