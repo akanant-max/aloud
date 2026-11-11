@@ -2,10 +2,13 @@ package com.akhouri.aloud
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.SettingsStore
 import com.akhouri.aloud.importer.BookImporter
 import com.akhouri.aloud.playback.PlaybackKeepAlive
+import com.akhouri.aloud.playback.PlaybackService
 import com.akhouri.aloud.playback.SleepTimer
 import com.akhouri.aloud.tts.Narrator
 import com.akhouri.aloud.tts.TtsEngine
@@ -15,7 +18,9 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -65,6 +70,36 @@ class AppGraph(context: Context) {
       narrator.setPitch(saved.pitch)
     }
   }
+
+  /**
+   * Puts the playback service in the foreground for as long as narration is running.
+   *
+   * Narration lives on this scope rather than inside the service, which leaves the service
+   * doing nothing Android can see — and a background service doing nothing visible is the
+   * first thing an aggressive vendor build reclaims. The audio carries on, because the process
+   * is still alive, but the notification and its controls go with the service.
+   *
+   * Promoting it at the moment playback starts is also the only point where it is safe to do
+   * so: a foreground start obliges the service to post its notification within a few seconds,
+   * which Media3 can only honour once the player is genuinely playing. Starting it at launch
+   * instead is what made an earlier build die on startup.
+   *
+   * Re-asserted on every transition into playing, so a service that was reclaimed while paused
+   * comes back rather than staying gone for the rest of the session.
+   */
+  fun keepServiceForegroundWhilePlaying() {
+    scope.launch {
+      narrator.state
+        .map { it.isPlaying }
+        .distinctUntilChanged()
+        .collect { playing ->
+          if (!playing) return@collect
+          val intent = Intent(appContext, PlaybackService::class.java)
+          runCatching { ContextCompat.startForegroundService(appContext, intent) }
+            .onFailure { CrashReporter.record(it, "promoting the playback service") }
+        }
+    }
+  }
 }
 
 class AloudApp : Application() {
@@ -80,6 +115,7 @@ class AloudApp : Application() {
     PDFBoxResourceLoader.init(this)
     graph = AppGraph(this)
     graph.restoreSettings()
+    graph.keepServiceForegroundWhilePlaying()
   }
 }
 
