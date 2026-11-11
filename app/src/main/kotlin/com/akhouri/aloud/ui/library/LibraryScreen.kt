@@ -32,15 +32,18 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -69,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -130,6 +134,11 @@ fun LibraryScreen(
   var renaming by remember { mutableStateOf<CollectionEntity?>(null) }
   var coverTarget by remember { mutableStateOf<String?>(null) }
 
+  // Multi-select: long-press a book to start, then tap others to add them.
+  var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+  var movingSelection by remember { mutableStateOf(false) }
+  var confirmingRemoval by remember { mutableStateOf(false) }
+
   var nameHits by remember { mutableStateOf<List<BookEntity>>(emptyList()) }
   var contentHits by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
   var searched by remember { mutableStateOf(false) }
@@ -151,8 +160,16 @@ fun LibraryScreen(
     )
   }
 
-  BackHandler(enabled = query.isNotEmpty() || openCollection != null) {
-    if (query.isNotEmpty()) query = "" else openCollectionId = null
+  // Only books still on screen count, so a selection cannot act on something out of sight.
+  val selectedBooks = visibleBooks.map { it.book }.filter { it.id in selected }
+  val selecting = selectedBooks.isNotEmpty()
+
+  BackHandler(enabled = selecting || query.isNotEmpty() || openCollection != null) {
+    when {
+      selecting -> selected = emptySet()
+      query.isNotEmpty() -> query = ""
+      else -> openCollectionId = null
+    }
   }
 
   // Debounced, and it covers both the names of books and every word inside them.
@@ -277,17 +294,35 @@ fun LibraryScreen(
       Column {
         TopAppBar(
           title = {
-            Text(openCollection?.name ?: "Aloud", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+              text = if (selecting) "${selectedBooks.size} selected" else openCollection?.name ?: "Aloud",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
           },
           navigationIcon = {
-            if (openCollection != null) {
+            if (selecting) {
+              IconButton(onClick = { selected = emptySet() }) {
+                Icon(Icons.Default.Close, contentDescription = "Cancel the selection")
+              }
+            } else if (openCollection != null) {
               IconButton(onClick = { openCollectionId = null }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to the library")
               }
             }
           },
           actions = {
-            if (openCollection == null) {
+            if (selecting) {
+              IconButton(onClick = { selected = visibleBooks.map { it.book.id }.toSet() }) {
+                Icon(Icons.Default.SelectAll, contentDescription = "Select all")
+              }
+              IconButton(onClick = { movingSelection = true }) {
+                Icon(Icons.Default.Folder, contentDescription = "Move the selection to a collection")
+              }
+              IconButton(onClick = { confirmingRemoval = true }) {
+                Icon(Icons.Default.Delete, contentDescription = "Remove the selection from the library")
+              }
+            } else if (openCollection == null) {
               IconButton(onClick = { sortMenuOpen = true }) {
                 Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
               }
@@ -318,7 +353,7 @@ fun LibraryScreen(
                 }
               }
             }
-            IconButton(
+            if (!selecting) IconButton(
               onClick = {
                 scope.launch {
                   appGraph.settings.setLibraryView(
@@ -333,8 +368,10 @@ fun LibraryScreen(
                 Icon(Icons.AutoMirrored.Filled.ViewList, contentDescription = "Show as a list")
               }
             }
-            IconButton(onClick = onOpenSettings) {
-              Icon(Icons.Default.Settings, contentDescription = "Settings")
+            if (!selecting) {
+              IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings")
+              }
             }
           },
         )
@@ -397,8 +434,17 @@ fun LibraryScreen(
     val shownCollections = if (openCollection == null) collections else emptyList()
 
     val bookActions: (BookEntity) -> BookActions = { book ->
+      val toggle = {
+        selected = if (book.id in selected) selected - book.id else selected + book.id
+      }
       BookActions(
-        onOpen = { if (book.importState == ImportState.READY) onOpenBook(book.id) },
+        selected = book.id in selected,
+        selecting = selecting,
+        onToggle = toggle,
+        // While selecting, a tap adds or removes the book instead of opening it.
+        onOpen = {
+          if (selecting) toggle() else if (book.importState == ImportState.READY) onOpenBook(book.id)
+        },
         onEdit = { editing = book },
         onMove = { moving = book },
         onEarlier = (fun() { scope.launch { shift(book, -1) } }).takeIf { openCollection != null },
@@ -527,7 +573,8 @@ fun LibraryScreen(
 
   moving?.let { book ->
     MoveDialog(
-      book = book,
+      currentCollectionId = book.collectionId,
+      canTakeOut = book.collectionId != null,
       collections = collections,
       onDismiss = { moving = null },
       onPick = { collectionId ->
@@ -543,6 +590,55 @@ fun LibraryScreen(
           moveTo(book, id)
         }
       },
+    )
+  }
+
+  if (movingSelection && selecting) {
+    val targets = selectedBooks
+    MoveDialog(
+      currentCollectionId = null,
+      canTakeOut = targets.any { it.collectionId != null },
+      collections = collections,
+      onDismiss = { movingSelection = false },
+      onPick = { collectionId ->
+        movingSelection = false
+        selected = emptySet()
+        scope.launch { targets.forEach { moveTo(it, collectionId) } }
+      },
+      onCreate = { name ->
+        movingSelection = false
+        selected = emptySet()
+        scope.launch {
+          val id = collectionDao.insert(
+            CollectionEntity(name = name, createdAt = System.currentTimeMillis()),
+          )
+          targets.forEach { moveTo(it, id) }
+        }
+      },
+    )
+  }
+
+  if (confirmingRemoval && selecting) {
+    val targets = selectedBooks
+    AlertDialog(
+      onDismissRequest = { confirmingRemoval = false },
+      title = { Text("Remove ${targets.size} book${if (targets.size == 1) "" else "s"}?") },
+      text = {
+        Text(
+          "They leave the library along with their bookmarks and saved places. The original " +
+            "files on your phone are not touched.",
+        )
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            confirmingRemoval = false
+            selected = emptySet()
+            scope.launch { targets.forEach { remove(it) } }
+          },
+        ) { Text("Remove") }
+      },
+      dismissButton = { TextButton(onClick = { confirmingRemoval = false }) { Text("Cancel") } },
     )
   }
 
@@ -562,6 +658,9 @@ fun LibraryScreen(
 // ---- pieces -------------------------------------------------------------------------------
 
 private class BookActions(
+  val selected: Boolean,
+  val selecting: Boolean,
+  val onToggle: () -> Unit,
   val onOpen: () -> Unit,
   val onEdit: () -> Unit,
   val onMove: () -> Unit,
@@ -660,6 +759,7 @@ private fun BookStatus(item: BookWithProgress, compact: Boolean) {
   }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookRow(item: BookWithProgress, actions: BookActions) {
   val book = item.book
@@ -669,7 +769,10 @@ private fun BookRow(item: BookWithProgress, actions: BookActions) {
     verticalAlignment = Alignment.CenterVertically,
     modifier = Modifier
       .fillMaxWidth()
-      .clickable(onClick = actions.onOpen)
+      .background(
+        if (actions.selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+      )
+      .combinedClickable(onClick = actions.onOpen, onLongClick = actions.onToggle)
       .padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
   ) {
     BookCover(coverPath = book.coverPath, modifier = Modifier.width(48.dp).aspectRatio(0.66f))
@@ -689,11 +792,15 @@ private fun BookRow(item: BookWithProgress, actions: BookActions) {
       )
       BookStatus(item, compact = false)
     }
-    Box {
-      IconButton(onClick = { menuOpen = true }) {
-        Icon(Icons.Default.MoreVert, contentDescription = "Options for ${book.title}")
+    if (actions.selecting) {
+      Checkbox(checked = actions.selected, onCheckedChange = { actions.onToggle() })
+    } else {
+      Box {
+        IconButton(onClick = { menuOpen = true }) {
+          Icon(Icons.Default.MoreVert, contentDescription = "Options for ${book.title}")
+        }
+        BookMenu(expanded = menuOpen, onDismiss = { menuOpen = false }, actions = actions)
       }
-      BookMenu(expanded = menuOpen, onDismiss = { menuOpen = false }, actions = actions)
     }
   }
 }
@@ -707,12 +814,35 @@ private fun BookTile(item: BookWithProgress, actions: BookActions) {
   Column(
     Modifier
       .clip(RoundedCornerShape(10.dp))
-      .combinedClickable(onClick = actions.onOpen, onLongClick = { menuOpen = true })
+      .background(
+        if (actions.selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+      )
+      .combinedClickable(onClick = actions.onOpen, onLongClick = actions.onToggle)
       .padding(6.dp),
   ) {
     Box {
       BookCover(coverPath = book.coverPath, modifier = Modifier.fillMaxWidth().aspectRatio(0.66f))
-      BookMenu(expanded = menuOpen, onDismiss = { menuOpen = false }, actions = actions)
+      if (actions.selecting) {
+        Checkbox(
+          checked = actions.selected,
+          onCheckedChange = { actions.onToggle() },
+          modifier = Modifier.align(Alignment.TopEnd),
+        )
+      } else {
+        Box(Modifier.align(Alignment.TopEnd)) {
+          IconButton(onClick = { menuOpen = true }) {
+            Icon(
+              Icons.Default.MoreVert,
+              contentDescription = "Options for ${book.title}",
+              tint = MaterialTheme.colorScheme.onSurface,
+              modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
+            )
+          }
+          BookMenu(expanded = menuOpen, onDismiss = { menuOpen = false }, actions = actions)
+        }
+      }
     }
     BookStatus(item, compact = true)
     Text(
@@ -1027,7 +1157,8 @@ private fun EditBookDialog(
 
 @Composable
 private fun MoveDialog(
-  book: BookEntity,
+  currentCollectionId: Long?,
+  canTakeOut: Boolean,
   collections: List<CollectionEntity>,
   onDismiss: () -> Unit,
   onPick: (Long?) -> Unit,
@@ -1055,14 +1186,14 @@ private fun MoveDialog(
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
-            if (book.collectionId == collection.id) {
+            if (currentCollectionId == collection.id) {
               Icon(Icons.Default.Check, contentDescription = "Currently here")
             }
           }
         }
-        if (book.collectionId != null) {
+        if (canTakeOut) {
           Text(
-            text = "Take out of its collection",
+            text = "Take out of the collection",
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.fillMaxWidth().clickable { onPick(null) }.padding(vertical = 12.dp),
           )
