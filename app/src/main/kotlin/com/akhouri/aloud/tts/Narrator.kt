@@ -84,6 +84,13 @@ class Narrator(
   private var generation = 0
   private var sequence = 0
 
+  /** Paragraphs to step back when resuming after a pause; set from settings. */
+  @Volatile
+  var rewindOnResume: Int = 0
+
+  /** True between a pause and the play that follows it, which is when the rewind applies. */
+  private var resumingFromPause = false
+
   /** When each utterance began and at what speed, for measuring the voice's real pace. */
   private val startedAt = HashMap<String, Pair<Long, Float>>()
 
@@ -120,6 +127,7 @@ class Narrator(
 
       invalidate()
       endOfBook = false
+      resumingFromPause = false
       paragraphLengths.clear()
       _state.value = _state.value.copy(
         bookId = bookId,
@@ -159,6 +167,15 @@ class Narrator(
       engine.setSpeechRate(current.speechRate)
       engine.setPitch(current.pitch)
 
+      // Picking a book back up a little before where it stopped makes the thread easier to
+      // find again. Only after a pause: a seek or a newly opened book starts where it says.
+      if (resumingFromPause && rewindOnResume > 0) {
+        val chapterStart = current.chapters.getOrNull(current.chapterIndex)?.startParagraph ?: 0
+        val target = (current.paragraphIndex - rewindOnResume).coerceAtLeast(chapterStart)
+        _state.value = _state.value.copy(paragraphIndex = target, charOffset = 0)
+      }
+      resumingFromPause = false
+
       // Tells the system this app is playing media, and keeps the CPU awake so the next
       // utterance can be queued with the screen off.
       keepAlive.acquire()
@@ -178,6 +195,7 @@ class Narrator(
       keepAlive.release()
       _state.value = _state.value.copy(isPlaying = false)
       persistProgress()
+      resumingFromPause = true
     }
   }
 
@@ -204,6 +222,7 @@ class Narrator(
       val wasPlaying = current.isPlaying
       invalidate()
       endOfBook = false
+      resumingFromPause = false
 
       _state.value = current.copy(
         paragraphIndex = target,

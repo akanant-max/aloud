@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { FollowSystem, Light, Dark }
 
+enum class ThemeColorScheme { Blue, Dynamic, Lagoon, Forest, Sunset, Berry, Lavender }
+
 enum class LibrarySort { Recent, Title, Author, Added, Progress }
 
 enum class LibraryView { List, Grid }
@@ -34,6 +36,14 @@ data class Settings(
   val mediaNotification: Boolean = true,
   /** The narration pace learned so far, in characters a second at normal speed. */
   val charsPerSecond: Float = 15f,
+  val themeColorScheme: ThemeColorScheme = ThemeColorScheme.Blue,
+  /** Paragraphs to step back when narration resumes after a pause, to pick the thread up. */
+  val rewindOnResume: Int = 0,
+  /** Starts a sleep timer by itself when narration begins inside the hours below. */
+  val autoSleep: Boolean = false,
+  val autoSleepStartMinute: Int = 22 * 60,
+  val autoSleepEndMinute: Int = 6 * 60,
+  val sleepMinutes: Int = 30,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
@@ -60,6 +70,14 @@ class SettingsStore(private val context: Context) {
       } ?: LibraryView.List,
       mediaNotification = prefs[MEDIA_NOTIFICATION] ?: true,
       charsPerSecond = prefs[CHARS_PER_SECOND] ?: 15f,
+      themeColorScheme = prefs[COLOR_SCHEME]?.let { name ->
+        runCatching { ThemeColorScheme.valueOf(name) }.getOrNull()
+      } ?: ThemeColorScheme.Blue,
+      rewindOnResume = prefs[REWIND_ON_RESUME] ?: 0,
+      autoSleep = prefs[AUTO_SLEEP] ?: false,
+      autoSleepStartMinute = prefs[AUTO_SLEEP_START] ?: 22 * 60,
+      autoSleepEndMinute = prefs[AUTO_SLEEP_END] ?: 6 * 60,
+      sleepMinutes = prefs[SLEEP_MINUTES] ?: 30,
     )
   }
 
@@ -92,6 +110,18 @@ class SettingsStore(private val context: Context) {
 
   suspend fun setCharsPerSecond(value: Float) = edit { it[CHARS_PER_SECOND] = value }
 
+  suspend fun setThemeColorScheme(scheme: ThemeColorScheme) = edit { it[COLOR_SCHEME] = scheme.name }
+
+  suspend fun setRewindOnResume(paragraphs: Int) = edit { it[REWIND_ON_RESUME] = paragraphs.coerceIn(0, 5) }
+
+  suspend fun setAutoSleep(enabled: Boolean) = edit { it[AUTO_SLEEP] = enabled }
+
+  suspend fun setAutoSleepStart(minuteOfDay: Int) = edit { it[AUTO_SLEEP_START] = minuteOfDay }
+
+  suspend fun setAutoSleepEnd(minuteOfDay: Int) = edit { it[AUTO_SLEEP_END] = minuteOfDay }
+
+  suspend fun setSleepMinutes(minutes: Int) = edit { it[SLEEP_MINUTES] = minutes.coerceIn(5, 180) }
+
   private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
     context.dataStore.edit(block)
   }
@@ -109,5 +139,11 @@ class SettingsStore(private val context: Context) {
     val LIBRARY_VIEW = stringPreferencesKey("library_view")
     val MEDIA_NOTIFICATION = booleanPreferencesKey("media_notification")
     val CHARS_PER_SECOND = floatPreferencesKey("chars_per_second")
+    val COLOR_SCHEME = stringPreferencesKey("color_scheme")
+    val REWIND_ON_RESUME = intPreferencesKey("rewind_on_resume")
+    val AUTO_SLEEP = booleanPreferencesKey("auto_sleep")
+    val AUTO_SLEEP_START = intPreferencesKey("auto_sleep_start")
+    val AUTO_SLEEP_END = intPreferencesKey("auto_sleep_end")
+    val SLEEP_MINUTES = intPreferencesKey("sleep_minutes")
   }
 }

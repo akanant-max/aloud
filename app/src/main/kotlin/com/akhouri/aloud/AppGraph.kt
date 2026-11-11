@@ -72,6 +72,30 @@ class AppGraph(context: Context) {
     }
   }
 
+  /** Feeds the listening settings that narration consults as it runs. */
+  fun followListeningSettings() {
+    scope.launch {
+      settings.settings.map { it.rewindOnResume }.distinctUntilChanged()
+        .collect { narrator.rewindOnResume = it }
+    }
+    // Narration that starts inside the chosen hours gets a sleep timer without being asked.
+    scope.launch {
+      narrator.state.map { it.isPlaying }.distinctUntilChanged().collect { playing ->
+        if (!playing) return@collect
+        val saved = settings.settings.first()
+        if (!saved.autoSleep || sleepTimer.state.value.running) return@collect
+        val now = java.util.Calendar.getInstance().let {
+          it.get(java.util.Calendar.HOUR_OF_DAY) * 60 + it.get(java.util.Calendar.MINUTE)
+        }
+        val start = saved.autoSleepStartMinute
+        val end = saved.autoSleepEndMinute
+        // The window may run past midnight, as from ten at night to six in the morning.
+        val inside = if (start <= end) now in start until end else now >= start || now < end
+        if (inside) sleepTimer.start(saved.sleepMinutes * 60_000L)
+      }
+    }
+  }
+
   /** Applies saved voice settings once, at startup, before anything is played. */
   fun restoreSettings() {
     scope.launch {
@@ -131,6 +155,7 @@ class AloudApp : Application() {
     graph.recoverInterruptedImports()
     graph.restoreSettings()
     graph.followNotificationSetting()
+    graph.followListeningSettings()
   }
 }
 

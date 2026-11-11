@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.akhouri.aloud.data.Settings
 import com.akhouri.aloud.graph
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -60,6 +62,9 @@ fun PlayerSheet(onDismiss: () -> Unit) {
   val state by narrator.state.collectAsStateWithLifecycle()
   val sleep by sleepTimer.state.collectAsStateWithLifecycle()
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+  val saved by remember { appGraph.settings.settings }
+    .collectAsStateWithLifecycle(initialValue = Settings())
+  val skip = saved.skipParagraphs
 
   ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
     Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
@@ -100,7 +105,7 @@ fun PlayerSheet(onDismiss: () -> Unit) {
         IconButton(onClick = { scope.launch { narrator.previousChapter() } }) {
           Icon(Icons.Default.SkipPrevious, contentDescription = "Previous chapter")
         }
-        IconButton(onClick = { scope.launch { narrator.skipParagraphs(-1) } }) {
+        IconButton(onClick = { scope.launch { narrator.skipParagraphs(-skip) } }) {
           Icon(Icons.Default.Replay30, contentDescription = "Back a paragraph")
         }
         FilledIconButton(
@@ -113,7 +118,7 @@ fun PlayerSheet(onDismiss: () -> Unit) {
             modifier = Modifier.size(36.dp),
           )
         }
-        IconButton(onClick = { scope.launch { narrator.skipParagraphs(1) } }) {
+        IconButton(onClick = { scope.launch { narrator.skipParagraphs(skip) } }) {
           Icon(Icons.Default.Forward30, contentDescription = "Forward a paragraph")
         }
         IconButton(onClick = { scope.launch { narrator.nextChapter() } }) {

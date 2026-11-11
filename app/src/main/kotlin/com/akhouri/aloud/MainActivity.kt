@@ -36,7 +36,11 @@ class MainActivity : ComponentActivity() {
       val settings by graph.settings.settings.collectAsState(initial = Settings())
       var showCrash by remember { mutableStateOf(crashReport != null) }
 
-      AloudTheme(themeMode = settings.themeMode, pureBlack = settings.pureBlack) {
+      AloudTheme(
+        themeMode = settings.themeMode,
+        colorScheme = settings.themeColorScheme,
+        pureBlack = settings.pureBlack,
+      ) {
         if (showCrash && crashReport != null) {
           CrashReportScreen(
             report = crashReport,

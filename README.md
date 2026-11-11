@@ -58,10 +58,13 @@ To build locally you need JDK 17 and the Android SDK:
   Text-to-Speech is preferred when present; any engine you select in Android's
   own settings is used otherwise.
 
-## Credits
+## Credits and licence
 
-Interface design, colour palette and the Literata typeface follow
-[Voice](https://github.com/PaulWoitaschek/Voice) by Paul Woitaschek. No code is
-taken from it. Literata is licensed under the SIL Open Font License.
+Aloud is licensed under the GNU General Public License v3 (see LICENSE.md).
+
+The interface is modelled on [Voice](https://github.com/PaulWoitaschek/Voice) by Paul
+Woitaschek, which is GPLv3: the theme and colour schemes, the typography, the island layout
+of the settings screen, and the library's shelves, cards and continue-listening card are
+adapted from Voice's source. Literata is licensed under the SIL Open Font License.
 
 PDF text extraction uses [PdfBox-Android](https://github.com/TomRoush/PdfBox-Android).

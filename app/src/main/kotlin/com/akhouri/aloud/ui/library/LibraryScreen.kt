@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 package com.akhouri.aloud.ui.library
 
 import android.net.Uri
@@ -52,6 +54,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -105,6 +108,7 @@ import com.akhouri.aloud.graph
 import com.akhouri.aloud.ui.BookCover
 import com.akhouri.aloud.ui.EmptyState
 import com.akhouri.aloud.ui.NowPlayingBar
+import com.akhouri.aloud.ui.theme.bookText
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -843,7 +847,7 @@ private fun ShelfHeader(content: ShelfContent, folded: Boolean, onToggle: () -> 
       .clickable(onClick = onToggle)
       .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 6.dp),
   ) {
-    Text(content.shelf.title, style = MaterialTheme.typography.titleLarge)
+    Text(content.shelf.title, style = MaterialTheme.typography.titleLargeEmphasized)
     CountPill(Icons.AutoMirrored.Filled.MenuBook, content.bookCount, "books")
     if (content.collections.isNotEmpty()) {
       CountPill(Icons.Default.Folder, content.collections.size, "collections")
@@ -910,12 +914,12 @@ private fun ContinueCard(
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
           Text(
             text = "Continue listening",
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelLargeEmphasized,
             color = colors.primary,
           )
           Text(
             text = book.title,
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineSmallEmphasized,
             color = colors.onPrimaryContainer,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -1079,17 +1083,23 @@ private fun BookRow(item: BookWithProgress, actions: BookActions) {
     verticalAlignment = Alignment.CenterVertically,
     modifier = Modifier
       .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 4.dp)
+      .clip(RoundedCornerShape(24.dp))
       .background(
-        if (actions.selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        if (actions.selected) {
+          MaterialTheme.colorScheme.secondaryContainer
+        } else {
+          MaterialTheme.colorScheme.surfaceContainer
+        },
       )
       .combinedClickable(onClick = actions.onOpen, onLongClick = actions.onToggle)
-      .padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+      .padding(start = 10.dp, end = 2.dp, top = 10.dp, bottom = 10.dp),
   ) {
-    BookCover(coverPath = book.coverPath, modifier = Modifier.width(48.dp).aspectRatio(0.66f))
-    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+    BookCover(coverPath = book.coverPath, modifier = Modifier.width(52.dp).aspectRatio(0.66f))
+    Column(Modifier.weight(1f).padding(start = 16.dp)) {
       Text(
         text = book.title,
-        style = MaterialTheme.typography.titleMedium,
+        style = MaterialTheme.typography.titleMediumEmphasized.bookText(),
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
@@ -1203,13 +1213,16 @@ private fun CollectionRow(
     verticalAlignment = Alignment.CenterVertically,
     modifier = Modifier
       .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 4.dp)
+      .clip(RoundedCornerShape(24.dp))
+      .background(MaterialTheme.colorScheme.surfaceContainer)
       .clickable(onClick = onOpen)
-      .padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+      .padding(start = 10.dp, end = 2.dp, top = 10.dp, bottom = 10.dp),
   ) {
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .width(48.dp)
+        .width(52.dp)
         .aspectRatio(0.66f)
         .clip(RoundedCornerShape(8.dp))
         .background(MaterialTheme.colorScheme.tertiaryContainer),

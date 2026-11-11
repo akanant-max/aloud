@@ -15,7 +15,8 @@ jvm-toolchain = "17"
 
 [libraries]
 compose-bom = "androidx.compose:compose-bom:2026.09.00"
-compose-material3 = { module = "androidx.compose.material3:material3" }
+# Pinned ahead of the BOM for the Material 3 Expressive theme, shapes and type styles.
+compose-material3 = { module = "androidx.compose.material3:material3", version = "1.5.0-rc01" }
 compose-material-icons = { module = "androidx.compose.material:material-icons-extended" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
