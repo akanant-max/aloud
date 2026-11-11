@@ -29,6 +29,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,8 +41,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.akhouri.aloud.data.TextSize
 import com.akhouri.aloud.graph
 import com.akhouri.aloud.ui.BookCover
+import com.akhouri.aloud.ui.player.formatRate
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,6 +68,21 @@ fun BookScreen(
     .collectAsStateWithLifecycle(initialValue = emptyList())
   val progress by remember(bookId) { appGraph.database.progressDao().observe(bookId) }
     .collectAsStateWithLifecycle(initialValue = null)
+
+  val narration by appGraph.narrator.state.collectAsStateWithLifecycle()
+
+  var total by remember(bookId) { mutableStateOf<TextSize?>(null) }
+  var remaining by remember(bookId) { mutableStateOf<TextSize?>(null) }
+
+  LaunchedEffect(bookId, book?.paragraphCount) {
+    total = runCatching { appGraph.database.paragraphDao().sizeFrom(bookId, 0) }.getOrNull()
+  }
+  // Recounted every twenty paragraphs rather than on every sentence spoken.
+  val position = progress?.paragraphIndex ?: 0
+  LaunchedEffect(bookId, position / 20, book?.paragraphCount) {
+    remaining = runCatching { appGraph.database.paragraphDao().sizeFrom(bookId, position) }
+      .getOrNull()
+  }
 
   val current = book
 
@@ -118,6 +139,36 @@ fun BookScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
               )
             }
+          }
+        }
+      }
+
+      item {
+        val words = total?.words ?: 0L
+        if (words > 0L) {
+          // Characters a second at the speed chosen now: the learned pace of this voice,
+          // scaled by the current speed, so changing speed changes the estimate at once.
+          val pace = narration.charsPerSecondAt1x * narration.speechRate
+          val leftSeconds = (remaining?.characters ?: 0L) / pace
+          val totalSeconds = (total?.characters ?: 0L) / pace
+
+          Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp)) {
+            Text(
+              text = "${grouped(words)} words · ${grouped((current?.paragraphCount ?: 0).toLong())} paragraphs",
+              style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+              text = "About ${duration(leftSeconds)} left at ${formatRate(narration.speechRate)}× " +
+                "· ${duration(totalSeconds)} in all",
+              style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+              text = "Estimated from how fast your voice has actually been reading; it " +
+                "sharpens as you listen.",
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(top = 2.dp),
+            )
           }
         }
       }
@@ -246,4 +297,17 @@ private fun SectionHeader(text: String) {
     color = MaterialTheme.colorScheme.primary,
     modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp),
   )
+}
+
+private fun grouped(value: Long): String = String.format(Locale.US, "%,d", value)
+
+private fun duration(seconds: Float): String {
+  val minutes = (seconds / 60f).toLong().coerceAtLeast(0L)
+  val hours = minutes / 60
+  val rest = minutes % 60
+  return when {
+    hours > 0 -> "$hours h $rest min"
+    minutes > 0 -> "$minutes min"
+    else -> "under a minute"
+  }
 }

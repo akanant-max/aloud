@@ -17,6 +17,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+/** About 180 words a minute, the usual pace of a speech engine before any is measured. */
+const val DEFAULT_CHARS_PER_SECOND = 15f
+
+private const val MIN_PACE = 4f
+private const val MAX_PACE = 60f
+
+/** How much one utterance moves the estimate: enough to adapt, not enough to jitter. */
+private const val PACE_WEIGHT = 0.08f
+
 /** Everything the UI and the media session need to know about narration, in one place. */
 data class NarrationState(
   val bookId: String? = null,
@@ -33,6 +42,11 @@ data class NarrationState(
   /** Set when narration stopped for a reason the user needs to see. */
   val error: String? = null,
   val speechRate: Float = 1.0f,
+  /**
+   * How fast the voice really gets through text at normal speed, in characters a second.
+   * Measured from actual narration, so time estimates fit this voice on this phone.
+   */
+  val charsPerSecondAt1x: Float = DEFAULT_CHARS_PER_SECOND,
   val pitch: Float = 1.0f,
 ) {
   val hasBook: Boolean get() = bookId != null
@@ -69,6 +83,9 @@ class Narrator(
   /** Bumped on every seek, stop and book change; stale callbacks carry an older value. */
   private var generation = 0
   private var sequence = 0
+
+  /** When each utterance began and at what speed, for measuring the voice's real pace. */
+  private val startedAt = HashMap<String, Pair<Long, Float>>()
 
   private var consecutiveFailures = 0
   private var endOfBook = false
@@ -304,6 +321,7 @@ class Narrator(
   private fun onStarted(event: TtsEvent.Started) {
     val chunk = inFlight[event.utteranceId] ?: return
     consecutiveFailures = 0
+    startedAt[event.utteranceId] = (System.nanoTime() / 1_000_000L) to _state.value.speechRate
     _state.value = _state.value.copy(
       paragraphIndex = chunk.paragraphIndex,
       charOffset = chunk.startOffset,
@@ -316,6 +334,7 @@ class Narrator(
   private suspend fun onDone(event: TtsEvent.Done) {
     val finished = inFlight.remove(event.utteranceId) ?: return
     consecutiveFailures = 0
+    learnPace(event.utteranceId, finished)
 
     // Position moves to the start of whatever is still outstanding, so stopping now and
     // resuming later repeats at most the chunk currently being spoken.
@@ -366,7 +385,36 @@ class Narrator(
     generation++
     pending.clear()
     inFlight.clear()
+    startedAt.clear()
     engine.stop()
+  }
+
+  /** Restores the pace learned in earlier sessions. */
+  fun setLearnedPace(charsPerSecond: Float) {
+    _state.value = _state.value.copy(
+      charsPerSecondAt1x = charsPerSecond.coerceIn(MIN_PACE, MAX_PACE),
+    )
+  }
+
+  /**
+   * Folds one finished utterance into the running estimate of the voice's pace. Dividing by
+   * the speed it was spoken at keeps the figure a normal-speed one, so an estimate can be
+   * rescaled the moment the speed changes instead of having to be relearned.
+   */
+  private fun learnPace(utteranceId: String, chunk: SpeechChunk) {
+    val (startMs, rate) = startedAt.remove(utteranceId) ?: return
+    val elapsedMs = System.nanoTime() / 1_000_000L - startMs
+    val chars = chunk.text.length
+    // Very short utterances are dominated by the engine's start-up pause.
+    if (elapsedMs < 500 || chars < 40 || rate <= 0f) return
+
+    val measured = chars / (elapsedMs / 1000f) / rate
+    if (measured !in MIN_PACE..MAX_PACE) return
+
+    val current = _state.value.charsPerSecondAt1x
+    _state.value = _state.value.copy(
+      charsPerSecondAt1x = current * (1f - PACE_WEIGHT) + measured * PACE_WEIGHT,
+    )
   }
 
   /**
@@ -381,6 +429,7 @@ class Narrator(
       generation++
       pending.clear()
       inFlight.clear()
+      startedAt.clear()
       engine.stop()
     }
 

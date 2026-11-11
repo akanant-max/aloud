@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -69,6 +70,15 @@ class AppGraph(context: Context) {
       val saved = settings.settings.first()
       narrator.setSpeechRate(saved.speechRate)
       narrator.setPitch(saved.pitch)
+      narrator.setLearnedPace(saved.charsPerSecond)
+
+      // Saved in tenths, so the store is written when the pace has really moved rather than
+      // after every sentence.
+      narrator.state
+        .map { (it.charsPerSecondAt1x * 10f).toInt() }
+        .distinctUntilChanged()
+        .drop(1)
+        .collect { tenths -> settings.setCharsPerSecond(tenths / 10f) }
     }
   }
 

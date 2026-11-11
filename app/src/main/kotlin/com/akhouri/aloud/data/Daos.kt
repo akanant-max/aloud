@@ -28,6 +28,9 @@ data class SearchResult(
   val snippet: String,
 )
 
+/** How much text there is; both are null when there is none. */
+data class TextSize(val words: Long?, val characters: Long?)
+
 /** A book with how far into it the listener has got, for the library list. */
 data class BookWithProgress(
   @Embedded val book: BookEntity,
@@ -160,6 +163,17 @@ interface ParagraphDao {
       "ORDER BY paragraphIndex",
   )
   suspend fun forChapter(bookId: String, chapterIndex: Int): List<ParagraphEntity>
+
+  /**
+   * Words and characters from a paragraph onwards. Words are counted as the gaps between
+   * them, which is exact enough for a figure shown to the nearest thousand.
+   */
+  @Query(
+    "SELECT SUM(LENGTH(text) - LENGTH(REPLACE(text, ' ', '')) + 1) AS words, " +
+      "SUM(LENGTH(text)) AS characters " +
+      "FROM paragraphs WHERE bookId = :bookId AND paragraphIndex >= :from",
+  )
+  suspend fun sizeFrom(bookId: String, from: Int): TextSize
 
   @Query("SELECT COUNT(*) FROM paragraphs WHERE bookId = :bookId")
   suspend fun count(bookId: String): Int

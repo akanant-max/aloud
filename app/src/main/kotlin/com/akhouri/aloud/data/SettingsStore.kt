@@ -32,6 +32,8 @@ data class Settings(
   val libraryView: LibraryView = LibraryView.List,
   /** Whether the media notification, and the lock-screen and headset controls, are on. */
   val mediaNotification: Boolean = true,
+  /** The narration pace learned so far, in characters a second at normal speed. */
+  val charsPerSecond: Float = 15f,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
@@ -57,6 +59,7 @@ class SettingsStore(private val context: Context) {
         runCatching { LibraryView.valueOf(name) }.getOrNull()
       } ?: LibraryView.List,
       mediaNotification = prefs[MEDIA_NOTIFICATION] ?: true,
+      charsPerSecond = prefs[CHARS_PER_SECOND] ?: 15f,
     )
   }
 
@@ -87,6 +90,8 @@ class SettingsStore(private val context: Context) {
 
   suspend fun setMediaNotification(enabled: Boolean) = edit { it[MEDIA_NOTIFICATION] = enabled }
 
+  suspend fun setCharsPerSecond(value: Float) = edit { it[CHARS_PER_SECOND] = value }
+
   private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
     context.dataStore.edit(block)
   }
@@ -103,5 +108,6 @@ class SettingsStore(private val context: Context) {
     val LIBRARY_SORT_REVERSED = booleanPreferencesKey("library_sort_reversed")
     val LIBRARY_VIEW = stringPreferencesKey("library_view")
     val MEDIA_NOTIFICATION = booleanPreferencesKey("media_notification")
+    val CHARS_PER_SECOND = floatPreferencesKey("chars_per_second")
   }
 }
