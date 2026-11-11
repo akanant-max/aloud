@@ -455,6 +455,8 @@ class Narrator(
    * stops here.
    */
   private suspend fun finishBook() {
+    // Played through to its last word, so it counts as completed without being told.
+    _state.value.bookId?.let { database.bookDao().setCompleted(it, true) }
     val next = nextInCollection()
     if (next == null) {
       keepAlive.release()

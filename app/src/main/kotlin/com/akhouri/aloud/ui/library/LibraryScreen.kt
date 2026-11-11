@@ -27,16 +27,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
@@ -48,6 +52,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -74,7 +79,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -131,6 +138,11 @@ fun LibraryScreen(
   var query by rememberSaveable { mutableStateOf("") }
   var searchOpen by rememberSaveable { mutableStateOf(false) }
   val searchFocus = remember { FocusRequester() }
+
+  // Which shelves are folded away, kept as their names so it survives rotation.
+  var folded by rememberSaveable { mutableStateOf("") }
+  val foldedShelves = folded.split(',').filter { it.isNotEmpty() }.toSet()
+  val narration by appGraph.narrator.state.collectAsStateWithLifecycle()
   var openCollectionId by rememberSaveable { mutableStateOf<Long?>(null) }
 
   var editing by remember { mutableStateOf<BookEntity?>(null) }
@@ -228,6 +240,16 @@ fun LibraryScreen(
     if (from < 0 || to !in ordered.indices) return
     ordered.add(to, ordered.removeAt(from))
     ordered.forEachIndexed { index, entry -> bookDao.setCollection(entry.id, collectionId, index) }
+  }
+
+  /** Back to the first word, and off the Ongoing shelf, as if it had never been opened. */
+  suspend fun restart(book: BookEntity) {
+    if (appGraph.narrator.state.value.bookId == book.id) {
+      appGraph.narrator.stop()
+      appGraph.narrator.open(book.id, paragraphIndex = 0)
+    }
+    appGraph.database.progressDao().delete(book.id)
+    bookDao.setCompleted(book.id, false)
   }
 
   suspend fun remove(book: BookEntity) {
@@ -449,7 +471,24 @@ fun LibraryScreen(
       }
     },
   ) { padding ->
-    val shownCollections = if (openCollection == null) collections else emptyList()
+    val shelves = buildShelves(books, collections, settings.librarySort, settings.librarySortReversed)
+
+    val toggleFold: (Shelf) -> Unit = { shelf ->
+      folded = (if (shelf.name in foldedShelves) foldedShelves - shelf.name else foldedShelves + shelf.name)
+        .joinToString(",")
+    }
+    val deleteCollection: (CollectionEntity) -> Unit = { collection ->
+      scope.launch {
+        bookDao.clearCollection(collection.id)
+        collectionDao.delete(collection.id)
+      }
+    }
+    val playOrPause: (BookEntity) -> Unit = { book ->
+      scope.launch {
+        if (appGraph.narrator.state.value.bookId != book.id) appGraph.narrator.open(book.id)
+        appGraph.narrator.togglePlayPause()
+      }
+    }
 
     val bookActions: (BookEntity) -> BookActions = { book ->
       val toggle = {
@@ -458,6 +497,9 @@ fun LibraryScreen(
       BookActions(
         selected = book.id in selected,
         selecting = selecting,
+        completed = book.completed,
+        onToggleCompleted = { scope.launch { bookDao.setCompleted(book.id, !book.completed) }; Unit },
+        onRestart = { scope.launch { restart(book) }; Unit },
         onToggle = toggle,
         // While selecting, a tap adds or removes the book instead of opening it.
         onOpen = {
@@ -518,23 +560,41 @@ fun LibraryScreen(
           item(span = { GridItemSpan(maxLineSpan) }) {
             CollectionHeader(count = visibleBooks.size, onPlayAll = playAll)
           }
-        }
-        items(shownCollections, key = { "c-${it.id}" }) { collection ->
-          CollectionTile(
-            collection = collection,
-            count = books.count { it.book.collectionId == collection.id },
-            onOpen = { openCollectionId = collection.id },
-            onRename = { renaming = collection },
-            onDelete = {
-              scope.launch {
-                bookDao.clearCollection(collection.id)
-                collectionDao.delete(collection.id)
+          items(visibleBooks, key = { "b-${it.book.id}" }) { item ->
+            BookTile(item = item, actions = bookActions(item.book))
+          }
+        } else {
+          shelves.forEach { shelf ->
+            if (shelf.isEmpty) return@forEach
+            val isFolded = shelf.shelf.name in foldedShelves
+            item(key = "h-${shelf.shelf.name}", span = { GridItemSpan(maxLineSpan) }) {
+              ShelfHeader(shelf, isFolded, onToggle = { toggleFold(shelf.shelf) })
+            }
+            if (isFolded) return@forEach
+            shelf.hero?.let { hero ->
+              item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
+                ContinueCard(
+                  item = hero,
+                  playing = narration.isPlaying && narration.bookId == hero.book.id,
+                  actions = bookActions(hero.book),
+                  onPlay = { playOrPause(hero.book) },
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                )
               }
-            },
-          )
-        }
-        items(visibleBooks, key = { "b-${it.book.id}" }) { item ->
-          BookTile(item = item, actions = bookActions(item.book))
+            }
+            items(shelf.collections, key = { "c-${it.first.id}" }) { (collection, count) ->
+              CollectionTile(
+                collection = collection,
+                count = count,
+                onOpen = { openCollectionId = collection.id },
+                onRename = { renaming = collection },
+                onDelete = { deleteCollection(collection) },
+              )
+            }
+            items(shelf.books, key = { "b-${it.book.id}" }) { item ->
+              BookTile(item = item, actions = bookActions(item.book))
+            }
+          }
         }
       }
 
@@ -546,23 +606,41 @@ fun LibraryScreen(
       ) {
         if (openCollection != null) {
           item { CollectionHeader(count = visibleBooks.size, onPlayAll = playAll) }
-        }
-        items(shownCollections, key = { "c-${it.id}" }) { collection ->
-          CollectionRow(
-            collection = collection,
-            count = books.count { it.book.collectionId == collection.id },
-            onOpen = { openCollectionId = collection.id },
-            onRename = { renaming = collection },
-            onDelete = {
-              scope.launch {
-                bookDao.clearCollection(collection.id)
-                collectionDao.delete(collection.id)
+          items(visibleBooks, key = { "b-${it.book.id}" }) { item ->
+            BookRow(item = item, actions = bookActions(item.book))
+          }
+        } else {
+          shelves.forEach { shelf ->
+            if (shelf.isEmpty) return@forEach
+            val isFolded = shelf.shelf.name in foldedShelves
+            item(key = "h-${shelf.shelf.name}") {
+              ShelfHeader(shelf, isFolded, onToggle = { toggleFold(shelf.shelf) })
+            }
+            if (isFolded) return@forEach
+            shelf.hero?.let { hero ->
+              item(key = "hero") {
+                ContinueCard(
+                  item = hero,
+                  playing = narration.isPlaying && narration.bookId == hero.book.id,
+                  actions = bookActions(hero.book),
+                  onPlay = { playOrPause(hero.book) },
+                  modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
               }
-            },
-          )
-        }
-        items(visibleBooks, key = { "b-${it.book.id}" }) { item ->
-          BookRow(item = item, actions = bookActions(item.book))
+            }
+            items(shelf.collections, key = { "c-${it.first.id}" }) { (collection, count) ->
+              CollectionRow(
+                collection = collection,
+                count = count,
+                onOpen = { openCollectionId = collection.id },
+                onRename = { renaming = collection },
+                onDelete = { deleteCollection(collection) },
+              )
+            }
+            items(shelf.books, key = { "b-${it.book.id}" }) { item ->
+              BookRow(item = item, actions = bookActions(item.book))
+            }
+          }
         }
       }
     }
@@ -678,6 +756,9 @@ fun LibraryScreen(
 private class BookActions(
   val selected: Boolean,
   val selecting: Boolean,
+  val completed: Boolean,
+  val onToggleCompleted: () -> Unit,
+  val onRestart: () -> Unit,
   val onToggle: () -> Unit,
   val onOpen: () -> Unit,
   val onEdit: () -> Unit,
@@ -686,6 +767,203 @@ private class BookActions(
   val onLater: (() -> Unit)?,
   val onRemove: () -> Unit,
 )
+
+/** The three shelves of the library, in the order they are shown. */
+private enum class Shelf(val title: String) {
+  Ongoing("Ongoing"),
+  Library("Library"),
+  Completed("Completed"),
+}
+
+private class ShelfContent(
+  val shelf: Shelf,
+  /** The book last listened to, shown large at the head of the Ongoing shelf. */
+  val hero: BookWithProgress?,
+  val collections: List<Pair<CollectionEntity, Int>>,
+  val books: List<BookWithProgress>,
+) {
+  val bookCount: Int get() = books.size + if (hero != null) 1 else 0
+  val isEmpty: Boolean get() = bookCount == 0 && collections.isEmpty()
+}
+
+/** Completed if marked so, ongoing once it has been listened to at all, otherwise untouched. */
+private fun shelfOf(item: BookWithProgress): Shelf = when {
+  item.book.completed -> Shelf.Completed
+  item.progressParagraph != null -> Shelf.Ongoing
+  else -> Shelf.Library
+}
+
+private fun buildShelves(
+  all: List<BookWithProgress>,
+  collections: List<CollectionEntity>,
+  sort: LibrarySort,
+  reversed: Boolean,
+): List<ShelfContent> {
+  val known = collections.map { it.id }.toSet()
+  val loose = all.filter { it.book.collectionId == null || it.book.collectionId !in known }
+
+  val hero = all
+    .filter { shelfOf(it) == Shelf.Ongoing && it.book.importState == ImportState.READY }
+    .maxByOrNull { it.book.lastOpenedAt ?: 0L }
+
+  // A collection sits where its books are: completed once all of them are, ongoing as soon
+  // as any has been started, and in the library until then.
+  val collectionsByShelf = collections
+    .map { collection ->
+      val members = all.filter { it.book.collectionId == collection.id }
+      val shelf = when {
+        members.isNotEmpty() && members.all { it.book.completed } -> Shelf.Completed
+        members.any { shelfOf(it) != Shelf.Library } -> Shelf.Ongoing
+        else -> Shelf.Library
+      }
+      shelf to (collection to members.size)
+    }
+    .groupBy({ it.first }, { it.second })
+
+  return Shelf.entries.map { shelf ->
+    ShelfContent(
+      shelf = shelf,
+      hero = hero.takeIf { shelf == Shelf.Ongoing },
+      collections = collectionsByShelf[shelf].orEmpty(),
+      books = sortBooks(
+        loose.filter { shelfOf(it) == shelf && it.book.id != hero?.book?.id },
+        sort,
+        reversed,
+      ),
+    )
+  }
+}
+
+@Composable
+private fun ShelfHeader(content: ShelfContent, folded: Boolean, onToggle: () -> Unit) {
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onToggle)
+      .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 6.dp),
+  ) {
+    Text(content.shelf.title, style = MaterialTheme.typography.titleLarge)
+    CountPill(Icons.AutoMirrored.Filled.MenuBook, content.bookCount, "books")
+    if (content.collections.isNotEmpty()) {
+      CountPill(Icons.Default.Folder, content.collections.size, "collections")
+    }
+    Box(Modifier.weight(1f))
+    Icon(
+      imageVector = if (folded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+      contentDescription = if (folded) "Show ${content.shelf.title}" else "Hide ${content.shelf.title}",
+      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
+
+@Composable
+private fun CountPill(icon: ImageVector, count: Int, what: String) {
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier
+      .padding(start = 8.dp)
+      .clip(RoundedCornerShape(50))
+      .background(MaterialTheme.colorScheme.secondaryContainer)
+      .padding(horizontal = 10.dp, vertical = 2.dp),
+  ) {
+    Icon(
+      imageVector = icon,
+      contentDescription = what,
+      tint = MaterialTheme.colorScheme.onSecondaryContainer,
+      modifier = Modifier.size(14.dp),
+    )
+    Text(
+      text = count.toString(),
+      style = MaterialTheme.typography.labelLarge,
+      color = MaterialTheme.colorScheme.onSecondaryContainer,
+      modifier = Modifier.padding(start = 4.dp),
+    )
+  }
+}
+
+/** The book last listened to, given the full width and a play button of its own. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ContinueCard(
+  item: BookWithProgress,
+  playing: Boolean,
+  actions: BookActions,
+  onPlay: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val book = item.book
+  val colors = MaterialTheme.colorScheme
+  Box(
+    modifier = modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(32.dp))
+      .background(
+        Brush.linearGradient(listOf(colors.primaryContainer, colors.tertiaryContainer)),
+      )
+      .combinedClickable(onClick = actions.onOpen, onLongClick = actions.onToggle)
+      .padding(20.dp),
+  ) {
+    Column {
+      Row {
+        BookCover(coverPath = book.coverPath, modifier = Modifier.width(84.dp).aspectRatio(0.66f))
+        Column(Modifier.weight(1f).padding(start = 16.dp)) {
+          Text(
+            text = "Continue listening",
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.primary,
+          )
+          Text(
+            text = book.title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = colors.onPrimaryContainer,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp),
+          )
+          book.author?.let {
+            Text(
+              text = it,
+              style = MaterialTheme.typography.bodyLarge,
+              color = colors.onPrimaryContainer.copy(alpha = 0.75f),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+      }
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 16.dp),
+      ) {
+        Column(Modifier.weight(1f)) {
+          LinearProgressIndicator(
+            progress = { item.fraction },
+            color = colors.primary,
+            trackColor = colors.primary.copy(alpha = 0.2f),
+            modifier = Modifier.fillMaxWidth(),
+          )
+          Text(
+            text = "${(item.fraction * 100).toInt()}% listened",
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.primary,
+            modifier = Modifier.padding(top = 8.dp),
+          )
+        }
+        FilledIconButton(
+          onClick = onPlay,
+          modifier = Modifier.padding(start = 16.dp).size(64.dp),
+        ) {
+          Icon(
+            imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+            contentDescription = if (playing) "Pause" else "Play",
+            modifier = Modifier.size(32.dp),
+          )
+        }
+      }
+    }
+  }
+}
 
 private fun sortLabel(sort: LibrarySort): String = when (sort) {
   LibrarySort.Recent -> "Recently opened"
@@ -714,6 +992,14 @@ private fun sortBooks(
 @Composable
 private fun BookMenu(expanded: Boolean, onDismiss: () -> Unit, actions: BookActions) {
   DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+    DropdownMenuItem(
+      text = { Text(if (actions.completed) "Mark as not completed" else "Mark as completed") },
+      onClick = { onDismiss(); actions.onToggleCompleted() },
+    )
+    DropdownMenuItem(
+      text = { Text("Start again from the beginning") },
+      onClick = { onDismiss(); actions.onRestart() },
+    )
     DropdownMenuItem(
       text = { Text("Edit title, author and cover") },
       onClick = { onDismiss(); actions.onEdit() },
@@ -754,7 +1040,13 @@ private fun BookStatus(item: BookWithProgress, compact: Boolean) {
       maxLines = 3,
       overflow = TextOverflow.Ellipsis,
     )
-    ImportState.READY -> {
+    ImportState.READY -> if (book.completed) {
+      Text(
+        text = "Completed",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+      )
+    } else {
       val started = (item.progressParagraph ?: 0) > 0
       if (!compact) {
         Text(

@@ -45,6 +45,11 @@ class PlaybackService : MediaSessionService() {
     session = MediaSession.Builder(this, player)
       .setSessionActivity(openApp)
       .build()
+      // Registered by hand because nothing in the app connects to this service as a media
+      // controller, which is what normally registers a session. Until it is registered the
+      // service does not watch the player, so it never posts its notification or enters the
+      // foreground when narration starts.
+      .also { addSession(it) }
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

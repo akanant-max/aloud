@@ -47,7 +47,7 @@ object Converters {
     SearchHistoryEntity::class,
     CollectionEntity::class,
   ],
-  version = 2,
+  version = 3,
   exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -74,13 +74,20 @@ abstract class AloudDatabase : RoomDatabase() {
         // Foreign keys drive the cascade that clears a book's chapters, paragraphs, FTS rows,
         // progress and bookmarks when the book goes.
         .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .build()
 
     /**
      * Adds duplicate detection and collections. Everything already imported stays exactly as
      * it is; existing books simply start outside any collection.
      */
+    /** Adds the completed mark; every existing book starts unmarked. */
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `books` ADD COLUMN `completed` INTEGER NOT NULL DEFAULT 0")
+      }
+    }
+
     val MIGRATION_1_2 = object : Migration(1, 2) {
       override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `books` ADD COLUMN `contentHash` TEXT")

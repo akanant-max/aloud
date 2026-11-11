@@ -82,6 +82,9 @@ interface BookDao {
   @Query("SELECT * FROM books WHERE contentHash = :hash LIMIT 1")
   suspend fun findByHash(hash: String): BookEntity?
 
+  @Query("UPDATE books SET completed = :completed WHERE id = :bookId")
+  suspend fun setCompleted(bookId: String, completed: Boolean)
+
   @Query("SELECT * FROM books WHERE contentHash IS NULL")
   suspend fun withoutHash(): List<BookEntity>
 
@@ -247,6 +250,9 @@ interface ProgressDao {
 
   @Query("SELECT * FROM progress WHERE bookId = :bookId")
   suspend fun find(bookId: String): ProgressEntity?
+
+  @Query("DELETE FROM progress WHERE bookId = :bookId")
+  suspend fun delete(bookId: String)
 
   @Query("SELECT * FROM progress WHERE bookId = :bookId")
   fun observe(bookId: String): Flow<ProgressEntity?>

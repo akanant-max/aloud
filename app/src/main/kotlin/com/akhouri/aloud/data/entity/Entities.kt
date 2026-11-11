@@ -39,6 +39,8 @@ data class BookEntity(
   val collectionId: Long? = null,
   /** Play order within the collection. */
   @ColumnInfo(defaultValue = "0") val collectionPosition: Int = 0,
+  /** Finished, either by being played to the end or by being marked so by hand. */
+  @ColumnInfo(defaultValue = "0") val completed: Boolean = false,
 )
 
 /**
