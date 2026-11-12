@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -40,6 +42,16 @@ class PlaybackKeepAlive(context: Context) {
 
   /** Focus came back after a temporary loss, such as the end of a call. */
   var onRegained: (() -> Unit)? = null
+
+  /**
+   * A looped second of silence, played from this app for as long as narration runs.
+   *
+   * The speech itself is played by the speech engine, which is a different app. Android sends
+   * headset and Bluetooth buttons to whichever app it last saw playing audio, so without a
+   * sound of its own this app is never that one, and a press of pause goes to some other
+   * player or nowhere. Silence costs next to nothing and makes the buttons arrive here.
+   */
+  private var silence: AudioTrack? = null
 
   private var focusRequest: AudioFocusRequest? = null
   private var pausedForTransientLoss = false
@@ -90,6 +102,7 @@ class PlaybackKeepAlive(context: Context) {
     }
 
     registerNoisyReceiver()
+    startSilence()
     return granted
   }
 
@@ -101,7 +114,46 @@ class PlaybackKeepAlive(context: Context) {
         .onFailure { CrashReporter.record(it, "releasing the wake lock") }
     }
     unregisterNoisyReceiver()
+    stopSilence()
     pausedForTransientLoss = false
+  }
+
+  private fun startSilence() {
+    if (silence != null) return
+    runCatching {
+      val frames = SILENCE_SAMPLE_RATE // one second, mono
+      val track = AudioTrack.Builder()
+        .setAudioAttributes(
+          AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build(),
+        )
+        .setAudioFormat(
+          AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(SILENCE_SAMPLE_RATE)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .build(),
+        )
+        .setTransferMode(AudioTrack.MODE_STATIC)
+        .setBufferSizeInBytes(frames * 2)
+        .build()
+      track.write(ShortArray(frames), 0, frames)
+      track.setLoopPoints(0, frames, -1)
+      track.play()
+      silence = track
+    }.onFailure { CrashReporter.record(it, "starting the silent track") }
+  }
+
+  private fun stopSilence() {
+    val track = silence ?: return
+    silence = null
+    runCatching {
+      track.pause()
+      track.flush()
+      track.release()
+    }
   }
 
   private fun requestFocus(): Boolean {
@@ -157,5 +209,6 @@ class PlaybackKeepAlive(context: Context) {
   private companion object {
     const val TAG = "PlaybackKeepAlive"
     const val MAX_HOLD_MS = 8 * 60 * 60 * 1000L
+    const val SILENCE_SAMPLE_RATE = 8000
   }
 }
