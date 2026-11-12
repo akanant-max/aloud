@@ -17,6 +17,21 @@ android {
     versionName = "0.1.0"
   }
 
+  // Every build has to carry the same signature, or Android refuses to install it over the
+  // last one. The key is not kept in the repository: the build workflow writes it here from a
+  // repository secret. Without it the build falls back to a throwaway key.
+  val fixedKeystore = file("debug.keystore")
+  signingConfigs {
+    getByName("debug") {
+      if (fixedKeystore.exists()) {
+        storeFile = fixedKeystore
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
+    }
+  }
+
   buildTypes {
     debug {
       applicationIdSuffix = ".debug"

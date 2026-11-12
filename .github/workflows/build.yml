@@ -26,6 +26,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # The same key every run, so each build installs over the one before it.
+      - name: Use the fixed signing key
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "$SIGNING_KEY" | base64 -d > app/debug.keystore
+            echo "Signing with the fixed key."
+          else
+            echo "::warning::SIGNING_KEYSTORE_BASE64 is not set; this build will not install over earlier ones."
+          fi
+
       - name: Build debug APK
         id: assemble
         run: |
