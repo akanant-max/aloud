@@ -28,8 +28,8 @@ class PlaybackService : MediaSessionService() {
   override fun onCreate() {
     super.onCreate()
 
-    val player = TtsPlayer(
-      looper = mainLooper,
+    val player = SessionPlayer(
+      player = graph.player,
       narrator = graph.narrator,
       scope = serviceScope,
     )
@@ -66,10 +66,9 @@ class PlaybackService : MediaSessionService() {
   }
 
   override fun onDestroy() {
-    session?.run {
-      player.release()
-      release()
-    }
+    // Only the session goes. The player belongs to the app and outlives this service, so
+    // narration carries on if the service is reclaimed or the notification is switched off.
+    session?.release()
     session = null
     serviceScope.cancel()
     super.onDestroy()

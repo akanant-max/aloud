@@ -7,11 +7,16 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
+import java.io.File
 import java.util.Locale
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -155,6 +160,33 @@ class TtsEngine(private val context: Context) {
     }
   }
 
+  /**
+   * Renders text to an audio file and returns once the file is complete. False means the
+   * engine refused or failed; the caller decides what that costs.
+   */
+  suspend fun synthesize(utteranceId: String, text: String, file: File): Boolean {
+    val engine = tts ?: return false
+    if (text.isBlank()) return false
+    return withTimeoutOrNull(SYNTHESIS_TIMEOUT_MS) {
+      coroutineScope {
+        // Listening before asking, so a result that arrives at once is not missed.
+        val outcome = async(start = CoroutineStart.UNDISPATCHED) {
+          events.first {
+            it.utteranceId == utteranceId && (it is TtsEvent.Done || it is TtsEvent.Failed)
+          }
+        }
+        val queued = runCatching { engine.synthesizeToFile(text, Bundle(), file, utteranceId) }
+          .getOrDefault(TextToSpeech.ERROR)
+        if (queued != TextToSpeech.SUCCESS) {
+          outcome.cancel()
+          false
+        } else {
+          outcome.await() is TtsEvent.Done
+        }
+      }
+    } ?: false
+  }
+
   fun stop() {
     runCatching { tts?.stop() }
   }
@@ -235,5 +267,6 @@ class TtsEngine(private val context: Context) {
 
     private const val TAG = "TtsEngine"
     private const val INIT_TIMEOUT_MS = 10_000L
+    private const val SYNTHESIS_TIMEOUT_MS = 90_000L
   }
 }

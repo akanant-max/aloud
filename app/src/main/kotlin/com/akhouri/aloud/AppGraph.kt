@@ -7,7 +7,9 @@ import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.SettingsStore
 import com.akhouri.aloud.importer.BookImporter
 import com.akhouri.aloud.importer.ImportQueue
-import com.akhouri.aloud.playback.PlaybackKeepAlive
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.exoplayer.ExoPlayer
 import com.akhouri.aloud.playback.PlaybackService
 import com.akhouri.aloud.playback.SleepTimer
 import com.akhouri.aloud.tts.Narrator
@@ -59,9 +61,27 @@ class AppGraph(context: Context) {
 
   val ttsEngine: TtsEngine by lazy { TtsEngine(appContext) }
 
-  val keepAlive: PlaybackKeepAlive by lazy { PlaybackKeepAlive(appContext) }
+  /**
+   * The player that actually makes the sound. Because it is an ordinary media player in this
+   * app's own process, it takes care of the things Android expects of one: audio focus, so it
+   * pauses when another app plays; stopping when headphones are unplugged; and keeping the
+   * processor awake while it plays.
+   */
+  val player: ExoPlayer by lazy {
+    ExoPlayer.Builder(appContext)
+      .setAudioAttributes(
+        AudioAttributes.Builder()
+          .setUsage(C.USAGE_MEDIA)
+          .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+          .build(),
+        /* handleAudioFocus = */ true,
+      )
+      .setHandleAudioBecomingNoisy(true)
+      .setWakeMode(C.WAKE_MODE_LOCAL)
+      .build()
+  }
 
-  val narrator: Narrator by lazy { Narrator(ttsEngine, database, keepAlive, scope) }
+  val narrator: Narrator by lazy { Narrator(appContext, ttsEngine, database, player, scope) }
 
   val sleepTimer: SleepTimer by lazy { SleepTimer(narrator, scope) }
 
@@ -75,8 +95,11 @@ class AppGraph(context: Context) {
   /** Feeds the listening settings that narration consults as it runs. */
   fun followListeningSettings() {
     scope.launch {
-      settings.settings.map { it.rewindOnResume }.distinctUntilChanged()
-        .collect { narrator.rewindOnResume = it }
+      settings.settings.collect { saved ->
+        narrator.rewindOnResume = saved.rewindOnResume
+        narrator.enginePackage = saved.enginePackage
+        narrator.voiceName = saved.voiceName
+      }
     }
     // Narration that starts inside the chosen hours gets a sleep timer without being asked.
     scope.launch {

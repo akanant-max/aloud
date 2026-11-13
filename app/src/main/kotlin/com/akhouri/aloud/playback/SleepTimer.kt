@@ -14,9 +14,8 @@ import kotlinx.coroutines.launch
 /**
  * Stops narration after a set time, or at the end of the chapter.
  *
- * A fade-out makes no sense for speech — it would just make the last sentence unintelligible —
- * so instead the rate eases down over the final stretch, which is a clear signal that it is
- * about to stop without losing any words.
+ * The volume fades over the final stretch, so the end arrives gently rather than as a voice
+ * cut off mid-sentence.
  */
 class SleepTimer(
   private val narrator: Narrator,
@@ -33,7 +32,7 @@ class SleepTimer(
   val state: StateFlow<State> = _state.asStateFlow()
 
   private var job: Job? = null
-  private var rateBeforeWindDown: Float? = null
+  private var fading = false
 
   fun start(durationMs: Long) {
     cancel()
@@ -73,7 +72,7 @@ class SleepTimer(
   fun cancel() {
     job?.cancel()
     job = null
-    restoreRate()
+    restoreVolume()
     _state.value = State()
   }
 
@@ -84,25 +83,23 @@ class SleepTimer(
     start(current.remainingMs + byMs)
   }
 
-  private suspend fun windDown(remainingMs: Long) {
-    val narration = narrator.state.value
-    if (rateBeforeWindDown == null) rateBeforeWindDown = narration.speechRate
-    val original = rateBeforeWindDown ?: return
+  /** Fades the volume down over the last stretch, so the end is not a sudden silence. */
+  private fun windDown(remainingMs: Long) {
+    fading = true
     val fraction = (remainingMs.toFloat() / WIND_DOWN_MS).coerceIn(0f, 1f)
-    val target = (original * (SLOWEST_FRACTION + (1f - SLOWEST_FRACTION) * fraction))
-    narrator.setSpeechRate(target)
+    narrator.setVolume(QUIETEST + (1f - QUIETEST) * fraction)
   }
 
   private suspend fun finish() {
     narrator.pause()
-    restoreRate()
+    restoreVolume()
     _state.value = State()
   }
 
-  private fun restoreRate() {
-    val original = rateBeforeWindDown ?: return
-    rateBeforeWindDown = null
-    scope.launch { narrator.setSpeechRate(original) }
+  private fun restoreVolume() {
+    if (!fading) return
+    fading = false
+    narrator.setVolume(1f)
   }
 
   private companion object {
@@ -111,7 +108,7 @@ class SleepTimer(
     /** How long before the end the rate starts easing down. */
     const val WIND_DOWN_MS = 30_000L
 
-    /** The slowest the wind-down goes, as a fraction of the chosen rate. */
-    const val SLOWEST_FRACTION = 0.7f
+    /** How quiet the fade gets before narration stops. */
+    const val QUIETEST = 0.15f
   }
 }
