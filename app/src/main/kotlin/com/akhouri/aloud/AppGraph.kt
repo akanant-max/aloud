@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
@@ -92,6 +93,15 @@ class AppGraph(context: Context) {
     }
   }
 
+  /** Starts the playback service if the notification is switched on; safe to call any time. */
+  fun ensurePlaybackService() {
+    scope.launch {
+      if (settings.settings.first().mediaNotification) {
+        runCatching { appContext.startService(Intent(appContext, PlaybackService::class.java)) }
+      }
+    }
+  }
+
   /** Feeds the listening settings that narration consults as it runs. */
   fun followListeningSettings() {
     scope.launch {
@@ -159,6 +169,23 @@ class AppGraph(context: Context) {
           runCatching { appContext.stopService(intent) }
         }
       }
+    }
+
+    // Android is free to shut the service down while narration is paused, and does so sooner
+    // in power saving. The app itself is still alive then, so pressing play makes sound but
+    // nothing would bring the notification back. Starting the service again each time
+    // narration begins does; it is harmless when the service is already running.
+    scope.launch {
+      combine(narrator.state.map { it.isPlaying }.distinctUntilChanged(), enabled) { playing, on ->
+        playing && on
+      }
+        .distinctUntilChanged()
+        .collect { wanted ->
+          if (wanted) {
+            runCatching { appContext.startService(intent) }
+              .onFailure { CrashReporter.record(it, "restarting the playback service") }
+          }
+        }
     }
   }
 }

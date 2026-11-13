@@ -56,6 +56,12 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** Coming back to the app is another moment the service may have gone missing. */
+  override fun onStart() {
+    super.onStart()
+    graph.ensurePlaybackService()
+  }
+
   /** Without this the media notification is silently suppressed on Android 13 and up. */
   private fun requestNotificationPermission() {
     if (Build.VERSION.SDK_INT < 33) return
