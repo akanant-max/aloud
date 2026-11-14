@@ -2,6 +2,9 @@
 
 package com.akhouri.aloud.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -92,6 +95,7 @@ import com.akhouri.aloud.ui.ShapedIcon
 import com.akhouri.aloud.ui.theme.dynamicColorAvailable
 import com.akhouri.aloud.ui.theme.rememberThemeColorScheme
 import com.akhouri.aloud.ui.theme.seedColor
+import com.akhouri.aloud.util.SessionLog
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -113,6 +117,7 @@ fun SettingsScreen(onBack: () -> Unit) {
   var voicesOpen by remember { mutableStateOf(false) }
   var pickingStart by remember { mutableStateOf(false) }
   var pickingEnd by remember { mutableStateOf(false) }
+  var showingLog by remember { mutableStateOf(false) }
 
   LaunchedEffect(Unit) { engines = appGraph.ttsEngine.availableEngines() }
 
@@ -360,6 +365,16 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
       }
 
+      // ---- Troubleshooting ----------------------------------------------------------------
+      SettingsIsland(title = "Troubleshooting", containerColor = colors.surfaceContainerLow) {
+        IslandRow(
+          title = "Media controls log",
+          summary = "What the notification, headset or watch has sent to the app",
+          onClick = { showingLog = true },
+          leading = { LeadIcon(Icons.Default.Schedule, MaterialShapes.Square, colors.secondary, colors.onSecondary) },
+        )
+      }
+
       // ---- About --------------------------------------------------------------------------
       val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
@@ -376,6 +391,38 @@ fun SettingsScreen(onBack: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
       )
     }
+  }
+
+  if (showingLog) {
+    val log = remember { SessionLog.text() }
+    AlertDialog(
+      onDismissRequest = { showingLog = false },
+      title = { Text("Media controls log") },
+      text = {
+        Text(
+          text = log,
+          style = MaterialTheme.typography.bodySmall,
+          modifier = Modifier.verticalScroll(rememberScrollState()),
+        )
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("Aloud media log", log))
+            showingLog = false
+          },
+        ) { Text("Copy") }
+      },
+      dismissButton = {
+        TextButton(
+          onClick = {
+            SessionLog.clear()
+            showingLog = false
+          },
+        ) { Text("Clear") }
+      },
+    )
   }
 
   if (pickingStart) {

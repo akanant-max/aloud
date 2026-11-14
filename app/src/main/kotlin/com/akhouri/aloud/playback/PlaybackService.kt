@@ -2,11 +2,13 @@ package com.akhouri.aloud.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.view.KeyEvent
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.akhouri.aloud.MainActivity
 import com.akhouri.aloud.graph
+import com.akhouri.aloud.util.SessionLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +29,7 @@ class PlaybackService : MediaSessionService() {
 
   override fun onCreate() {
     super.onCreate()
+    SessionLog.add("service created")
 
     val player = SessionPlayer(
       player = graph.player,
@@ -44,12 +47,51 @@ class PlaybackService : MediaSessionService() {
 
     session = MediaSession.Builder(this, player)
       .setSessionActivity(openApp)
+      .setCallback(RecordingCallback)
       .build()
       // Registered by hand because nothing in the app connects to this service as a media
       // controller, which is what normally registers a session. Until it is registered the
       // service does not watch the player, so it never posts its notification or enters the
       // foreground when narration starts.
       .also { addSession(it) }
+  }
+
+  /** Changes nothing about how the session behaves; it only writes down what reaches it. */
+  private object RecordingCallback : MediaSession.Callback {
+
+    override fun onConnect(
+      session: MediaSession,
+      controller: MediaSession.ControllerInfo,
+    ): MediaSession.ConnectionResult {
+      SessionLog.add("connect   ${controller.packageName} (version ${controller.controllerVersion})")
+      return super.onConnect(session, controller)
+    }
+
+    override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
+      SessionLog.add("disconnect ${controller.packageName}")
+    }
+
+    override fun onPlayerCommandRequest(
+      session: MediaSession,
+      controller: MediaSession.ControllerInfo,
+      playerCommand: Int,
+    ): Int {
+      SessionLog.add("command   $playerCommand from ${controller.packageName}")
+      return super.onPlayerCommandRequest(session, controller, playerCommand)
+    }
+
+    override fun onMediaButtonEvent(
+      session: MediaSession,
+      controllerInfo: MediaSession.ControllerInfo,
+      intent: Intent,
+    ): Boolean {
+      @Suppress("DEPRECATION")
+      val key = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
+      SessionLog.add(
+        "button    key ${key?.keyCode} action ${key?.action} from ${controllerInfo.packageName}",
+      )
+      return super.onMediaButtonEvent(session, controllerInfo, intent)
+    }
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
