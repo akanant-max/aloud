@@ -71,7 +71,7 @@ data class NarrationState(
  * skips one.
  */
 class Narrator(
-  private val piper: PiperEngine,
+  private val speech: Speech,
   private val books: BookDao,
   private val chapterDao: ChapterDao,
   private val paragraphs: ParagraphDao,
@@ -97,7 +97,7 @@ class Narrator(
   @Volatile
   var rewindOnResume: Int = 0
 
-  /** The chosen voice's model file; null means the default. Set from settings. */
+  /** The chosen voice's key (see [Voice.key]); null means the default. Set from settings. */
   @Volatile
   var voicePath: String? = null
 
@@ -265,6 +265,8 @@ class Narrator(
       if (path == voicePath) return
       voicePath = path
       restartIfLive()
+      // The engine no longer needed lets its model go.
+      scope.launch { runCatching { speech.keepOnly(Voices.resolve(path)) } }
     }
   }
 
@@ -298,7 +300,7 @@ class Narrator(
     }
     generation++
     pipeline?.cancel()
-    runCatching { runBlocking { piper.stop() } }
+    runCatching { runBlocking { speech.stop() } }
     player.close()
     speechDir.listFiles()?.forEach { it.delete() }
   }
@@ -307,21 +309,10 @@ class Narrator(
 
   /** Checks the speech engine and a voice are there. Reports and returns null if not. */
   private fun prepare(): Voice? {
-    if (!piper.isInstalled) {
-      _state.value = _state.value.copy(
-        isPlaying = false,
-        isPreparing = false,
-        error = "The speech engine is missing from this installation. Reinstalling Aloud should fix it.",
-      )
-      return null
-    }
     val voice = Voices.resolve(voicePath)
-    if (voice == null) {
-      _state.value = _state.value.copy(
-        isPlaying = false,
-        isPreparing = false,
-        error = "No voice is installed. Add one in Settings, under Voice.",
-      )
+    val problem = if (voice == null) "No voice is installed. Add one in Settings, under Voice." else speech.problemWith(voice)
+    if (problem != null) {
+      _state.value = _state.value.copy(isPlaying = false, isPreparing = false, error = problem)
       return null
     }
     return voice
@@ -400,7 +391,7 @@ class Narrator(
 
       val chunk = pending.removeFirst()
       val rate = _state.value.speechRate
-      val file = piper.synthesize(chunk.text, voice.model, rate, speechDir)
+      val file = speech.synthesize(chunk.text, voice, rate, speechDir)
       if (stamp != generation) {
         file?.delete()
         return
@@ -408,7 +399,7 @@ class Narrator(
       if (file == null) {
         failures++
         if (failures >= MAX_CONSECUTIVE_FAILURES) {
-          val detail = piper.lastError?.let { " ($it)" }.orEmpty()
+          val detail = speech.lastError?.let { " ($it)" }.orEmpty()
           failWith("The speech engine kept failing$detail. Try another voice in Settings.")
           return
         }

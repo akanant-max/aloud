@@ -19,6 +19,7 @@ concurrency:
 env:
   PIPER_URL: https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip
   VOICE_URL: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+  SHERPA_VERSION: 1.13.7
 
 jobs:
   build:
@@ -44,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: desktop/downloads
-          key: speech-${{ env.PIPER_URL }}-${{ env.VOICE_URL }}
+          key: speech-${{ env.PIPER_URL }}-${{ env.VOICE_URL }}-sherpa-${{ env.SHERPA_VERSION }}
 
       - name: Fetch the speech engine and the bundled voice
         run: |
@@ -54,8 +55,17 @@ jobs:
           [ -s piper.zip ] || curl -fsSL --retry 3 -o piper.zip "$PIPER_URL"
           [ -s voice.onnx ] || curl -fsSL --retry 3 -o voice.onnx "$VOICE_URL"
           [ -s voice.onnx.json ] || curl -fsSL --retry 3 -o voice.onnx.json "$VOICE_URL.json"
+          SHERPA=https://github.com/k2-fsa/sherpa-onnx/releases/download/v$SHERPA_VERSION
+          [ -s sherpa-jvm.jar ] || curl -fsSL --retry 3 -o sherpa-jvm.jar "$SHERPA/sherpa-onnx-jvm-$SHERPA_VERSION.jar"
+          [ -s sherpa-native.jar ] || curl -fsSL --retry 3 -o sherpa-native.jar "$SHERPA/sherpa-onnx-native-lib-win-x64-$SHERPA_VERSION.jar"
           cd ..
-          rm -rf resources/windows/piper resources/windows/voices
+          rm -rf resources/windows/piper resources/windows/voices resources/windows/sherpa
+          mkdir -p libs resources/windows/sherpa
+          cp downloads/sherpa-jvm.jar "libs/sherpa-onnx-jvm-$SHERPA_VERSION.jar"
+          7z e downloads/sherpa-native.jar -oresources/windows/sherpa "*.dll" -r -y > /dev/null
+          ls -la resources/windows/sherpa
+          test -s resources/windows/sherpa/sherpa-onnx-jni.dll
+          test -s resources/windows/sherpa/onnxruntime.dll
           mkdir -p resources/windows/voices
           7z x downloads/piper.zip -oresources/windows -y > /dev/null
           cp downloads/voice.onnx resources/windows/voices/en_US-lessac-medium.onnx

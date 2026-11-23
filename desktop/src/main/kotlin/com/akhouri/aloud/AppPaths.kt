@@ -36,6 +36,12 @@ object AppPaths {
 
   val piperExe: File? get() = bundled?.let { File(it, "piper/piper.exe") }
 
+  /** sherpa-onnx's native libraries, which run the natural voices. */
+  val sherpaNative: File? get() = bundled?.let { File(it, "sherpa") }
+
+  /** The natural voices' model, downloaded on request. */
+  val naturalVoices: File get() = File(dataDir, "natural-voices").apply { mkdirs() }
+
   val bundledVoices: File? get() = bundled?.let { File(it, "voices") }
 
   val controlsExe: File? get() = bundled?.let { File(it, "controls/AloudControls.exe") }

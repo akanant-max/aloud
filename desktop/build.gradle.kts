@@ -23,6 +23,10 @@ dependencies {
   implementation("org.xerial:sqlite-jdbc:3.50.3.0")
   implementation("org.jsoup:jsoup:1.21.1")
   implementation("org.apache.pdfbox:pdfbox:3.0.5")
+  implementation("org.apache.commons:commons-compress:1.27.1")
+  // sherpa-onnx's Java API, for the natural voices. Fetched by the build from its GitHub release;
+  // its native libraries ship in resources/windows/sherpa.
+  implementation(files("libs/sherpa-onnx-jvm-1.13.7.jar"))
 
   testImplementation(kotlin("test"))
   testImplementation("junit:junit:4.13.2")

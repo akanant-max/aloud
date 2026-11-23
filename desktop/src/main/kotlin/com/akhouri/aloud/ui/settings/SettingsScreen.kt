@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Minimize
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.TextFields
@@ -87,7 +88,9 @@ import com.akhouri.aloud.data.LibraryView
 import com.akhouri.aloud.data.ThemeColorScheme
 import com.akhouri.aloud.data.ThemeMode
 import com.akhouri.aloud.tts.DownloadableVoice
+import com.akhouri.aloud.tts.NaturalVoices
 import com.akhouri.aloud.tts.Voice
+import com.akhouri.aloud.tts.VoiceEngine
 import com.akhouri.aloud.tts.Voices
 import com.akhouri.aloud.ui.FilePickers
 import com.akhouri.aloud.ui.IslandContentPadding
@@ -134,17 +137,17 @@ fun SettingsScreen(onBack: () -> Unit) {
 
   fun preview(voice: Voice) {
     if (previewing != null) return
-    previewing = voice.id
+    previewing = voice.key
     scope.launch {
       val dir = File(AppPaths.speech, "preview")
-      val file = graph.piper.synthesize(
+      val file = graph.speech.synthesize(
         "This is how this voice will read your books.",
-        voice.model,
+        voice,
         graph.narrator.state.value.speechRate,
         dir,
       )
       if (file == null) {
-        voiceMessage = "That voice could not be played" + (graph.piper.lastError?.let { ": $it" } ?: ".")
+        voiceMessage = "That voice could not be played" + (graph.speech.lastError?.let { ": $it" } ?: ".")
       } else {
         withContext(Dispatchers.IO) {
           val player = WavPlayer()
@@ -162,13 +165,72 @@ fun SettingsScreen(onBack: () -> Unit) {
     if (entry.id in downloads) return
     downloads[entry.id] = 0f
     scope.launch {
-      val result = Voices.download(entry) { progress -> scope.launch { downloads[entry.id] = progress } }
+      val result = Voices.download(entry) { progress -> scope.launch { if (entry.id in downloads) downloads[entry.id] = progress.coerceAtLeast(0.001f) } }
       downloads.remove(entry.id)
       voices = Voices.installed()
       voiceMessage = result.fold(
         onSuccess = { "${it.displayName} is ready" },
-        onFailure = { "The download failed: ${it.message ?: it.javaClass.simpleName}" },
+        onFailure = { "${Voices.describe(entry.id)}: ${it.message ?: it.javaClass.simpleName}" },
       )
+    }
+  }
+
+  fun downloadNatural() {
+    if (NATURAL_KEY in downloads) return
+    downloads[NATURAL_KEY] = 0f
+    scope.launch {
+      val result = NaturalVoices.download { progress -> scope.launch { if (NATURAL_KEY in downloads) downloads[NATURAL_KEY] = progress.coerceAtLeast(0.001f) } }
+      downloads.remove(NATURAL_KEY)
+      voices = Voices.installed()
+      voiceMessage = result.fold(
+        onSuccess = {
+          // Asked for to sound like the phone, so it takes over straight away.
+          voices.firstOrNull { it.engine == VoiceEngine.Natural }?.let { heart ->
+            store.update { it.copy(voicePath = heart.key) }
+          }
+          "The natural voices are ready. Heart is reading now; try the others with their play buttons."
+        },
+        onFailure = { "The natural voices: ${it.message ?: it.javaClass.simpleName}" },
+      )
+    }
+  }
+
+  @Composable
+  fun VoiceRow(voice: Voice, summary: String, removable: Boolean) {
+    IslandRow(
+      title = voice.displayName,
+      summary = summary,
+      onClick = { store.update { it.copy(voicePath = voice.key) } },
+      leading = { RadioButton(selected = currentVoice?.key == voice.key, onClick = null) },
+      trailing = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          if (previewing == voice.key) {
+            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp).padding(2.dp))
+          } else {
+            IconButton(onClick = { preview(voice) }) {
+              Icon(Icons.Default.PlayArrow, contentDescription = "Hear ${voice.displayName}")
+            }
+          }
+          if (removable) {
+            IconButton(onClick = {
+              Voices.remove(voice)
+              voices = Voices.installed()
+              if (currentVoice?.key == voice.key) store.update { it.copy(voicePath = null) }
+            }) {
+              Icon(Icons.Default.Delete, contentDescription = "Remove ${voice.displayName}")
+            }
+          }
+        }
+      },
+    )
+  }
+
+  @Composable
+  fun DownloadProgress(progress: Float?) {
+    when {
+      progress == null -> Unit
+      progress == 0f -> Text("Waiting", style = MaterialTheme.typography.labelMedium)
+      else -> LinearProgressIndicator(progress = { progress }, modifier = Modifier.size(width = 80.dp, height = 4.dp))
     }
   }
 
@@ -241,58 +303,62 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         // ---- Voice --------------------------------------------------------------------------
         SettingsIsland(title = "Voice", containerColor = colors.tertiaryContainer) {
-          if (!graph.piper.isInstalled) {
+          val natural = voices.filter { it.engine == VoiceEngine.Natural }
+          val standard = voices.filter { it.engine == VoiceEngine.Piper }
+
+          IslandLabel("Natural voices")
+          if (natural.isEmpty()) {
+            val progress = downloads[NATURAL_KEY]
+            IslandRow(
+              title = "Get the natural voices",
+              summary = when {
+                progress == null -> "The closest to Google's voice on your phone · 14 voices · one ${NaturalVoices.DOWNLOAD_MB} MB download"
+                progress == 0f -> "Waiting for the other downloads to finish"
+                progress < 0.8f -> "Downloading… ${(progress / 0.8f * 100).toInt()}%"
+                else -> "Unpacking…"
+              },
+              onClick = { downloadNatural() },
+              leading = { LeadIcon(Icons.Default.RecordVoiceOver, MaterialShapes.Cookie9Sided, colors.tertiary, colors.onTertiary) },
+              trailing = { DownloadProgress(progress) },
+            )
+          } else {
+            natural.forEach { voice -> VoiceRow(voice, voice.note.orEmpty(), removable = false) }
+            IslandRow(
+              title = "Remove the natural voices",
+              summary = "Frees about 180 MB; they can be downloaded again",
+              onClick = {
+                scope.launch {
+                  graph.speech.natural.stop()
+                  withContext(Dispatchers.IO) { NaturalVoices.remove() }
+                  voices = Voices.installed()
+                  if (currentVoice?.engine == VoiceEngine.Natural) store.update { it.copy(voicePath = null) }
+                }
+              },
+              leading = { LeadIcon(Icons.Default.Delete, MaterialShapes.Pill, colors.tertiary, colors.onTertiary) },
+            )
+          }
+
+          IslandLabel("Standard voices", modifier = Modifier.padding(top = 16.dp))
+          if (!graph.speech.piper.isInstalled) {
             Text(
               text = "The speech engine is missing from this installation. Reinstalling Aloud should fix it.",
               style = MaterialTheme.typography.bodyMedium,
               modifier = Modifier.padding(horizontal = IslandContentPadding),
             )
           }
-          IslandLabel("On this PC")
-          voices.forEach { voice ->
-            IslandRow(
-              title = voice.displayName,
-              summary = if (voice.bundled) "Comes with Aloud" else "Added",
-              onClick = {
-                store.update { it.copy(voicePath = voice.model.absolutePath) }
-              },
-              leading = { RadioButton(selected = currentVoice?.id == voice.id, onClick = null) },
-              trailing = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                  if (previewing == voice.id) {
-                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp).padding(2.dp))
-                  } else {
-                    IconButton(onClick = { preview(voice) }) {
-                      Icon(Icons.Default.PlayArrow, contentDescription = "Hear ${voice.displayName}")
-                    }
-                  }
-                  if (!voice.bundled) {
-                    IconButton(onClick = {
-                      Voices.remove(voice)
-                      voices = Voices.installed()
-                      if (currentVoice?.id == voice.id) store.update { it.copy(voicePath = null) }
-                    }) {
-                      Icon(Icons.Default.Delete, contentDescription = "Remove ${voice.displayName}")
-                    }
-                  }
-                }
-              },
-            )
+          standard.forEach { voice ->
+            VoiceRow(voice, if (voice.bundled) "Comes with Aloud" else "Added", removable = !voice.bundled)
           }
 
-          IslandLabel("More voices to download", modifier = Modifier.padding(top = 16.dp))
-          Voices.catalogue.filter { entry -> voices.none { it.id == entry.id } }.forEach { entry ->
+          IslandLabel("More standard voices to download", modifier = Modifier.padding(top = 16.dp))
+          Voices.catalogue.filter { entry -> standard.none { it.id == entry.id } }.forEach { entry ->
             val progress = downloads[entry.id]
             IslandRow(
               title = Voices.describe(entry.id),
-              summary = entry.note,
+              summary = if (progress == 0f) "Waiting for the other downloads to finish" else entry.note,
               onClick = { download(entry) },
               leading = { LeadIcon(Icons.Default.Download, MaterialShapes.Pill, colors.tertiary, colors.onTertiary) },
-              trailing = {
-                if (progress != null) {
-                  LinearProgressIndicator(progress = { progress }, modifier = Modifier.size(width = 80.dp, height = 4.dp))
-                }
-              },
+              trailing = { DownloadProgress(progress) },
             )
           }
           IslandRow(
@@ -428,7 +494,8 @@ fun SettingsScreen(onBack: () -> Unit) {
         Text(
           text = "Aloud ${AppPaths.version}\nReads EPUB, PDF with a text layer, Kindle books without DRM, " +
             "FB2, Word, HTML and plain text. Everything is converted to text and read aloud on this PC " +
-            "by Piper, an offline neural voice: no account, no server, no connection needed.\n" +
+            "by offline neural voices, Piper and Kokoro (through sherpa-onnx): no account, no server, " +
+            "no connection needed once a voice is on this PC.\n" +
             "Design after Voice by Paul Woitaschek.",
           style = MaterialTheme.typography.bodySmall,
           color = colors.onSurfaceVariant,
@@ -580,3 +647,4 @@ private fun PaletteSwatch(scheme: ThemeColorScheme, selected: Boolean, onClick: 
   }
 }
 
+private const val NATURAL_KEY = "natural"

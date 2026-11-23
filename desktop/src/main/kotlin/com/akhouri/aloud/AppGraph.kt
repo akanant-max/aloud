@@ -14,7 +14,7 @@ import com.akhouri.aloud.importer.ImportQueue
 import com.akhouri.aloud.media.MediaControls
 import com.akhouri.aloud.playback.SleepTimer
 import com.akhouri.aloud.tts.Narrator
-import com.akhouri.aloud.tts.PiperEngine
+import com.akhouri.aloud.tts.Speech
 import com.akhouri.aloud.util.CrashReporter
 import java.util.Calendar
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -56,9 +56,9 @@ class AppGraph {
   val importer = BookImporter(books, chapters, paragraphs)
   val importQueue = ImportQueue(importer, books, scope)
 
-  val piper = PiperEngine()
+  val speech = Speech()
   val player = WavPlayer()
-  val narrator = Narrator(piper, books, chapters, paragraphs, progress, player, scope)
+  val narrator = Narrator(speech, books, chapters, paragraphs, progress, player, scope)
   val sleepTimer = SleepTimer(narrator, scope)
   val mediaControls = MediaControls(narrator, { settings.current.skipParagraphs }, scope)
 

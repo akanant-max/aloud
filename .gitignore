@@ -15,5 +15,7 @@ desktop/downloads/
 desktop/resources/windows/piper/
 desktop/resources/windows/voices/
 desktop/resources/windows/controls/
+desktop/resources/windows/sherpa/
+desktop/libs/
 desktop/controls/bin/
 desktop/controls/obj/
