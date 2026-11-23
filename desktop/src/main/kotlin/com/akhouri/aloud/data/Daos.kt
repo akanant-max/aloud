@@ -193,7 +193,7 @@ class ChapterDao(private val db: Database) {
     ).use { statement ->
       chapters.forEach { chapter ->
         statement.bindAll(
-          arrayOf(chapter.bookId, chapter.chapterIndex, chapter.title, chapter.startParagraph, chapter.paragraphCount),
+          arrayOf<Any?>(chapter.bookId, chapter.chapterIndex, chapter.title, chapter.startParagraph, chapter.paragraphCount),
         )
         statement.addBatch()
       }
@@ -228,7 +228,7 @@ class ParagraphDao(private val db: Database) {
         "VALUES (?, ?, ?, ?, ?)",
     ).use { statement ->
       paragraphs.forEach { p ->
-        statement.bindAll(arrayOf(p.bookId, p.paragraphIndex, p.chapterIndex, p.page, p.text))
+        statement.bindAll(arrayOf<Any?>(p.bookId, p.paragraphIndex, p.chapterIndex, p.page, p.text))
         statement.addBatch()
       }
       statement.executeBatch()
