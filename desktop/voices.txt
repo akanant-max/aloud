@@ -1,0 +1,9 @@
+# The Piper voices the Windows app offers: id, then the path in rhasspy/piper-voices without the extension.
+en_US-lessac-medium en/en_US/lessac/medium/en_US-lessac-medium
+en_US-lessac-high en/en_US/lessac/high/en_US-lessac-high
+en_US-ryan-high en/en_US/ryan/high/en_US-ryan-high
+en_US-amy-medium en/en_US/amy/medium/en_US-amy-medium
+en_US-hfc_female-medium en/en_US/hfc_female/medium/en_US-hfc_female-medium
+en_GB-alba-medium en/en_GB/alba/medium/en_GB-alba-medium
+en_GB-cori-high en/en_GB/cori/high/en_GB-cori-high
+en_GB-northern_english_male-medium en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium

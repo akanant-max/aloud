@@ -1,0 +1,90 @@
+name: Check and mirror the Windows voices
+
+# Downloads every voice the Windows app offers, makes each one speak a sentence with the same
+# Piper build the app ships, and mirrors the ones that work onto the "voices" release, which the
+# app downloads from first. A report of what happened goes to the voices-report branch.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/voices.yml'
+      - 'desktop/voices.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PIPER_URL: https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip
+  HF: https://huggingface.co/rhasspy/piper-voices/resolve/main
+
+jobs:
+  voices:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Piper
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o piper.zip "$PIPER_URL"
+          7z x piper.zip -o. -y > /dev/null
+          ls piper | head
+
+      - name: Download and test each voice
+        run: |
+          set -u
+          mkdir -p voices out
+          : > report.txt
+          while read -r id path; do
+            [ -z "$id" ] && continue
+            case "$id" in \#*) continue;; esac
+            line="$id:"
+            code_json=$(curl -sSL --retry 3 -w '%{http_code}' -o "voices/$id.onnx.json" "$HF/$path.onnx.json")
+            code_model=$(curl -sSL --retry 3 -w '%{http_code}' -o "voices/$id.onnx" "$HF/$path.onnx")
+            size=$(stat -c %s "voices/$id.onnx" 2>/dev/null || echo 0)
+            line="$line json=$code_json model=$code_model size=$size"
+            rm -f out/test.wav
+            echo "This is a test of the voice." | ./piper/piper.exe --model "voices/$id.onnx" --output_file out/test.wav > "out/$id.log" 2>&1
+            rc=$?
+            wav=$(stat -c %s out/test.wav 2>/dev/null || echo 0)
+            line="$line piper_exit=$rc wav=$wav"
+            if [ "$rc" = 0 ] && [ "$wav" -gt 10000 ]; then
+              line="$line OK"
+              echo "$id" >> passed.txt
+            else
+              line="$line FAILED: $(tail -n 5 "out/$id.log" | tr '\n' ' ' | cut -c1-600)"
+            fi
+            echo "$line" | tee -a report.txt
+          done < desktop/voices.txt
+
+      - name: Mirror the working voices
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -u
+          gh release view voices > /dev/null 2>&1 || gh release create voices --title "Voices for the Windows app" --notes "Piper voices mirrored from rhasspy/piper-voices (MIT-licensed models; see each voice's model card)." --prerelease
+          if [ -f passed.txt ]; then
+            while read -r id; do
+              gh release upload voices "voices/$id.onnx" "voices/$id.onnx.json" --clobber && echo "$id mirrored" | tee -a report.txt
+            done < passed.txt
+          fi
+
+      - name: Publish the report
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work=$(mktemp -d)
+          cp report.txt "$work/" 2>/dev/null || echo "no report" > "$work/report.txt"
+          mkdir -p "$work/logs" && cp out/*.log "$work/logs/" 2>/dev/null || true
+          cd "$work"
+          git init -q
+          git add -A
+          git -c user.email=ci@local -c user.name=ci commit -qm "voices report for $GITHUB_SHA"
+          git push -f "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" HEAD:voices-report
