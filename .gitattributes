@@ -1,0 +1,4 @@
+# The Windows build machine runs these through bash; Windows line endings would break them.
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf

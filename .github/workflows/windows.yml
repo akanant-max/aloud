@@ -1,0 +1,116 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A newer push makes an older build pointless.
+concurrency:
+  group: windows-build
+  cancel-in-progress: true
+
+env:
+  PIPER_URL: https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip
+  VOICE_URL: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache the speech engine and voice
+        uses: actions/cache@v4
+        with:
+          path: desktop/downloads
+          key: speech-${{ env.PIPER_URL }}-${{ env.VOICE_URL }}
+
+      - name: Fetch the speech engine and the bundled voice
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/downloads
+          cd desktop/downloads
+          [ -s piper.zip ] || curl -fsSL --retry 3 -o piper.zip "$PIPER_URL"
+          [ -s voice.onnx ] || curl -fsSL --retry 3 -o voice.onnx "$VOICE_URL"
+          [ -s voice.onnx.json ] || curl -fsSL --retry 3 -o voice.onnx.json "$VOICE_URL.json"
+          cd ..
+          rm -rf resources/windows/piper resources/windows/voices
+          mkdir -p resources/windows/voices
+          7z x downloads/piper.zip -oresources/windows -y > /dev/null
+          cp downloads/voice.onnx resources/windows/voices/en_US-lessac-medium.onnx
+          cp downloads/voice.onnx.json resources/windows/voices/en_US-lessac-medium.onnx.json
+          ls resources/windows resources/windows/piper | head -20
+
+      - name: Build the media controls helper
+        run: |
+          set -o pipefail
+          dotnet build desktop/controls/AloudControls.csproj -c Release -o desktop/resources/windows/controls 2>&1 | tee -a build.log
+
+      - name: Build and test the app
+        id: app
+        run: |
+          set -o pipefail
+          ./gradlew -p desktop test createDistributable --stacktrace 2>&1 | tee -a build.log
+
+      - name: Build the installer
+        id: installer
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./gradlew -p desktop packageMsi --stacktrace 2>&1 | tee -a build.log
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd desktop/build/compose/binaries/main/app && 7z a -tzip ../../../../../../out/Aloud-Windows-portable.zip Aloud > /dev/null)
+          if ls desktop/build/compose/binaries/main/msi/*.msi > /dev/null 2>&1; then
+            cp desktop/build/compose/binaries/main/msi/*.msi out/Aloud-Windows-setup.msi
+          fi
+          ls -la out
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete windows-latest --yes --cleanup-tag || true
+          gh release create windows-latest out/* \
+            --title "Windows build" \
+            --notes "Windows build of ${{ github.sha }}. Aloud-Windows-setup.msi installs it; Aloud-Windows-portable.zip runs without installing." \
+            --prerelease
+
+      # Mirrors the failure output onto a branch of its own, readable with a plain git fetch.
+      - name: Mirror the build log to a branch
+        if: failure() || steps.installer.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work=$(mktemp -d)
+          cp build.log "$work/build.log" 2>/dev/null || echo "no log" > "$work/build.log"
+          cd "$work"
+          tail -c 300000 build.log > tail.log && mv tail.log build.log
+          git init -q
+          git add -A
+          git -c user.email=ci@local -c user.name=ci commit -qm "windows build log for $GITHUB_SHA"
+          git push -f "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" HEAD:build-logs-windows

@@ -9,3 +9,11 @@ captures/
 .cxx
 *.apk
 *.keystore
+
+# Windows build: fetched or built on the build machine, never committed.
+desktop/downloads/
+desktop/resources/windows/piper/
+desktop/resources/windows/voices/
+desktop/resources/windows/controls/
+desktop/controls/bin/
+desktop/controls/obj/

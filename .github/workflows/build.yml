@@ -3,6 +3,10 @@ name: Build APK
 on:
   push:
     branches: [ main ]
+    # The Windows app has a workflow of its own.
+    paths-ignore:
+      - 'desktop/**'
+      - '.github/workflows/windows.yml'
   pull_request:
   workflow_dispatch:
 
