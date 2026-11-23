@@ -1,0 +1,16 @@
+en_US-lessac-medium: json=200 model=200 size=63201294 piper_exit=0 wav=75936 OK
+en_US-lessac-high: json=200 model=200 size=113895201 piper_exit=0 wav=75424 OK
+en_US-ryan-high: json=200 model=200 size=120786792 piper_exit=0 wav=75936 OK
+en_US-amy-medium: json=200 model=200 size=63221984 piper_exit=0 wav=116896 OK
+en_US-hfc_female-medium: json=200 model=200 size=63221984 piper_exit=0 wav=102048 OK
+en_GB-alba-medium: json=200 model=200 size=63221984 piper_exit=0 wav=102048 OK
+en_GB-cori-high: json=200 model=200 size=114219352 piper_exit=0 wav=83104 OK
+en_GB-northern_english_male-medium: json=200 model=200 size=63221984 piper_exit=0 wav=88224 OK
+en_US-lessac-medium mirrored
+en_US-lessac-high mirrored
+en_US-ryan-high mirrored
+en_US-amy-medium mirrored
+en_US-hfc_female-medium mirrored
+en_GB-alba-medium mirrored
+en_GB-cori-high mirrored
+en_GB-northern_english_male-medium mirrored

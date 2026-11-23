@@ -1,0 +1,5 @@
+[2026-11-23 21:28:50.896] [piper] [info] Loaded voice in 0.70493 second(s)
+[2026-11-23 21:28:50.907] [piper] [info] Initialized piper
+out/test.wav
+[2026-11-23 21:28:51.134] [piper] [info] Real-time factor: 0.10091774639423076 (infer=0.2132408 sec, audio=2.1130158730158732 sec)
+[2026-11-23 21:28:51.135] [piper] [info] Terminated piper
