@@ -38,7 +38,8 @@ jobs:
 
       - name: Download and test each voice
         run: |
-          set -u
+          set +e
+          tr -d '\r' < desktop/voices.txt > list.txt
           mkdir -p voices out
           : > report.txt
           while read -r id path; do
@@ -61,7 +62,7 @@ jobs:
               line="$line FAILED: $(tail -n 5 "out/$id.log" | tr '\n' ' ' | cut -c1-600)"
             fi
             echo "$line" | tee -a report.txt
-          done < desktop/voices.txt
+          done < list.txt
 
       - name: Mirror the working voices
         env:
@@ -72,7 +73,7 @@ jobs:
           if [ -f passed.txt ]; then
             while read -r id; do
               gh release upload voices "voices/$id.onnx" "voices/$id.onnx.json" --clobber && echo "$id mirrored" | tee -a report.txt
-            done < passed.txt
+            done < <(tr -d '\r' < passed.txt)
           fi
 
       - name: Publish the report
