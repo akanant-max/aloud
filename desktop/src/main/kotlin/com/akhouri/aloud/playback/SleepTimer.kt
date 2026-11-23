@@ -1,0 +1,87 @@
+package com.akhouri.aloud.playback
+
+import com.akhouri.aloud.tts.Narrator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * Stops narration after a set time, or at the end of the chapter. The volume fades over the last
+ * stretch, so the end arrives gently rather than as a voice cut off mid-sentence.
+ */
+class SleepTimer(
+  private val narrator: Narrator,
+  private val scope: CoroutineScope,
+) {
+
+  data class State(
+    val running: Boolean = false,
+    val remainingMs: Long = 0L,
+    val untilEndOfChapter: Boolean = false,
+  )
+
+  private val _state = MutableStateFlow(State())
+  val state: StateFlow<State> = _state.asStateFlow()
+
+  private var job: Job? = null
+
+  fun start(durationMs: Long) {
+    cancel()
+    job = scope.launch {
+      var remaining = durationMs
+      _state.value = State(running = true, remainingMs = remaining)
+      while (isActive && remaining > 0) {
+        delay(TICK_MS)
+        // Time only counts down while something is actually being read.
+        if (narrator.state.value.isPlaying) remaining -= TICK_MS
+        _state.value = _state.value.copy(remainingMs = remaining.coerceAtLeast(0))
+        if (remaining in 1..FADE_MS) {
+          narrator.setFade(QUIETEST + (1f - QUIETEST) * (remaining.toFloat() / FADE_MS))
+        }
+      }
+      if (isActive) finish()
+    }
+  }
+
+  fun startUntilEndOfChapter() {
+    cancel()
+    val startingChapter = narrator.state.value.chapterIndex
+    _state.value = State(running = true, untilEndOfChapter = true)
+    job = scope.launch {
+      narrator.state.first { it.chapterIndex != startingChapter || (!it.isPlaying && !it.isPreparing) }
+      finish()
+    }
+  }
+
+  /** Adds time to a running countdown. */
+  fun extend(byMs: Long) {
+    val current = _state.value
+    if (!current.running || current.untilEndOfChapter) return
+    start(current.remainingMs + byMs)
+  }
+
+  fun cancel() {
+    job?.cancel()
+    job = null
+    narrator.setFade(1f)
+    _state.value = State()
+  }
+
+  private suspend fun finish() {
+    narrator.pause()
+    narrator.setFade(1f)
+    _state.value = State()
+  }
+
+  private companion object {
+    const val TICK_MS = 1_000L
+    const val FADE_MS = 30_000L
+    const val QUIETEST = 0.15f
+  }
+}
