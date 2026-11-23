@@ -49,6 +49,7 @@ jobs:
             code_json=$(curl -sSL --retry 3 -w '%{http_code}' -o "voices/$id.onnx.json" "$HF/$path.onnx.json")
             code_model=$(curl -sSL --retry 3 -w '%{http_code}' -o "voices/$id.onnx" "$HF/$path.onnx")
             size=$(stat -c %s "voices/$id.onnx" 2>/dev/null || echo 0)
+            PYTHONUTF8=1 python desktop/tools/fix_voice_json.py "voices/$id.onnx.json"
             line="$line json=$code_json model=$code_model size=$size"
             rm -f out/test.wav
             echo "This is a test of the voice." | ./piper/piper.exe --model "voices/$id.onnx" --output_file out/test.wav > "out/$id.log" 2>&1

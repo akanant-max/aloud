@@ -196,7 +196,7 @@ fun SettingsScreen(onBack: () -> Unit) {
   }
 
   @Composable
-  fun VoiceRow(voice: Voice, summary: String, removable: Boolean) {
+  fun VoiceRow(voice: Voice, summary: String) {
     IslandRow(
       title = voice.displayName,
       summary = summary,
@@ -211,14 +211,28 @@ fun SettingsScreen(onBack: () -> Unit) {
               Icon(Icons.Default.PlayArrow, contentDescription = "Hear ${voice.displayName}")
             }
           }
-          if (removable) {
-            IconButton(onClick = {
+          // A downloaded standard voice is deleted; the others are only taken off the list,
+          // since they share files with voices that stay.
+          val deletes = voice.engine == VoiceEngine.Piper && !voice.bundled
+          IconButton(onClick = {
+            if (deletes) {
               Voices.remove(voice)
               voices = Voices.installed()
-              if (currentVoice?.key == voice.key) store.update { it.copy(voicePath = null) }
-            }) {
-              Icon(Icons.Default.Delete, contentDescription = "Remove ${voice.displayName}")
             }
+            store.update { s ->
+              val hidden = if (deletes) s.hiddenVoices - voice.key else s.hiddenVoices + voice.key
+              val next = if (s.voicePath == voice.key || currentVoice?.key == voice.key) {
+                voices.firstOrNull { it.key != voice.key && it.key !in hidden }?.key
+              } else {
+                s.voicePath
+              }
+              s.copy(hiddenVoices = hidden, voicePath = next)
+            }
+          }) {
+            Icon(
+              Icons.Default.Delete,
+              contentDescription = if (deletes) "Delete ${voice.displayName}" else "Remove ${voice.displayName} from the list",
+            )
           }
         }
       },
@@ -303,8 +317,10 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         // ---- Voice --------------------------------------------------------------------------
         SettingsIsland(title = "Voice", containerColor = colors.tertiaryContainer) {
+          val hidden = settings.hiddenVoices
           val natural = voices.filter { it.engine == VoiceEngine.Natural }
           val standard = voices.filter { it.engine == VoiceEngine.Piper }
+          val hiddenCount = voices.count { it.key in hidden }
 
           IslandLabel("Natural voices")
           if (natural.isEmpty()) {
@@ -322,7 +338,7 @@ fun SettingsScreen(onBack: () -> Unit) {
               trailing = { DownloadProgress(progress) },
             )
           } else {
-            natural.forEach { voice -> VoiceRow(voice, voice.note.orEmpty(), removable = false) }
+            natural.filter { it.key !in hidden }.forEach { voice -> VoiceRow(voice, voice.note.orEmpty()) }
             IslandRow(
               title = "Remove the natural voices",
               summary = "Frees about 180 MB; they can be downloaded again",
@@ -346,8 +362,8 @@ fun SettingsScreen(onBack: () -> Unit) {
               modifier = Modifier.padding(horizontal = IslandContentPadding),
             )
           }
-          standard.forEach { voice ->
-            VoiceRow(voice, if (voice.bundled) "Comes with Aloud" else "Added", removable = !voice.bundled)
+          standard.filter { it.key !in hidden }.forEach { voice ->
+            VoiceRow(voice, if (voice.bundled) "Comes with Aloud" else "Downloaded")
           }
 
           IslandLabel("More standard voices to download", modifier = Modifier.padding(top = 16.dp))
@@ -359,6 +375,14 @@ fun SettingsScreen(onBack: () -> Unit) {
               onClick = { download(entry) },
               leading = { LeadIcon(Icons.Default.Download, MaterialShapes.Pill, colors.tertiary, colors.onTertiary) },
               trailing = { DownloadProgress(progress) },
+            )
+          }
+          if (hiddenCount > 0) {
+            IslandRow(
+              title = "Bring back removed voices",
+              summary = "$hiddenCount taken off the list; they cost nothing to bring back",
+              onClick = { store.update { it.copy(hiddenVoices = emptySet()) } },
+              leading = { LeadIcon(Icons.Default.Replay, MaterialShapes.Pill, colors.tertiary, colors.onTertiary) },
             )
           }
           IslandRow(

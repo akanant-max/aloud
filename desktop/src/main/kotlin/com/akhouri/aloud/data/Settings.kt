@@ -19,6 +19,8 @@ data class Settings(
   val speechRate: Float = 1.0f,
   /** Path of the chosen voice model; null means the voice that ships with the app. */
   val voicePath: String? = null,
+  /** Voices put away from the list (keys, see Voice.key), shown again on request. */
+  val hiddenVoices: Set<String> = emptySet(),
   val themeMode: ThemeMode = ThemeMode.FollowSystem,
   val themeColorScheme: ThemeColorScheme = ThemeColorScheme.Blue,
   val pureBlack: Boolean = false,
@@ -75,6 +77,7 @@ class SettingsStore(private val file: File) {
     return Settings(
       speechRate = float("speechRate", d.speechRate),
       voicePath = str("voicePath")?.takeIf { it.isNotBlank() },
+      hiddenVoices = str("hiddenVoices")?.split('|')?.filter { it.isNotBlank() }?.toSet() ?: d.hiddenVoices,
       themeMode = enumOr(str("themeMode"), d.themeMode),
       themeColorScheme = enumOr(str("themeColorScheme"), d.themeColorScheme),
       pureBlack = bool("pureBlack", d.pureBlack),
@@ -107,6 +110,7 @@ class SettingsStore(private val file: File) {
     }
     put("speechRate", s.speechRate)
     put("voicePath", s.voicePath)
+    put("hiddenVoices", s.hiddenVoices.joinToString("|"))
     put("themeMode", s.themeMode.name)
     put("themeColorScheme", s.themeColorScheme.name)
     put("pureBlack", s.pureBlack)

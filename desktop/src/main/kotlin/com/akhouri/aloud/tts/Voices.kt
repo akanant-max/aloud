@@ -136,6 +136,7 @@ object NaturalVoices {
 object Voices {
 
   private const val COLLECTION = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+  private const val MIRROR = "https://github.com/akanant-max/aloud/releases/download/voices/"
 
   /** A short, tested list of English voices worth having. More can be added from a file. */
   val catalogue = listOf(
@@ -149,6 +150,8 @@ object Voices {
     DownloadableVoice("en_GB-northern_english_male-medium", "en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium", "Northern English, male"),
   )
 
+  private val fixedOnce = java.util.Collections.synchronizedSet(HashSet<String>())
+
   /** Piper voices on this PC: the bundled ones first, then those downloaded or added. */
   fun installedPiper(): List<Voice> {
     fun scan(dir: File?, bundled: Boolean) = dir?.listFiles { f ->
@@ -157,6 +160,8 @@ object Voices {
 
     val bundled = scan(AppPaths.bundledVoices, bundled = true)
     val user = scan(AppPaths.userVoices, bundled = false).filter { v -> bundled.none { it.id == v.id } }
+    // Voices downloaded before the settings-file fix are mended once, quietly.
+    user.forEach { v -> if (fixedOnce.add(v.model.path)) runCatching { VoiceConfigFix.apply(File(v.model.path + ".json")) } }
     return bundled + user
   }
 
@@ -188,14 +193,24 @@ object Voices {
         val dir = AppPaths.userVoices
         val model = File(dir, "${voice.id}.onnx")
         val config = File(dir, "${voice.id}.onnx.json")
-        Downloads.fetchWithRetry(COLLECTION + voice.path + ".onnx.json", config) { }
-        try {
-          Downloads.fetchWithRetry(COLLECTION + voice.path + ".onnx", model, onProgress)
-        } catch (e: Throwable) {
-          config.delete()
-          throw e
+        // Aloud's own copy, checked to work on Windows, first; the original collection if not.
+        val sources = listOf(MIRROR + voice.id, COLLECTION + voice.path)
+        var failure: Throwable? = null
+        for (base in sources) {
+          try {
+            Downloads.fetchWithRetry("$base.onnx.json", config) { }
+            Downloads.fetchWithRetry("$base.onnx", model, onProgress)
+            VoiceConfigFix.apply(config)
+            return@runCatching Voice(voice.id, model, bundled = false)
+          } catch (e: CancellationException) {
+            config.delete()
+            throw e
+          } catch (e: Throwable) {
+            config.delete()
+            failure = e
+          }
         }
-        Voice(voice.id, model, bundled = false)
+        throw failure ?: IOException("The voice could not be downloaded")
       }
     }
   }
@@ -208,6 +223,7 @@ object Voices {
     val dir = AppPaths.userVoices
     model.copyTo(File(dir, model.name), overwrite = true)
     config.copyTo(File(dir, config.name), overwrite = true)
+    VoiceConfigFix.apply(File(dir, config.name))
     Voice(model.name.removeSuffix(".onnx"), File(dir, model.name), bundled = false)
   }
 
