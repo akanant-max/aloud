@@ -54,7 +54,8 @@ jobs:
           fi
 
   app:
-    runs-on: macos-15
+    # Apple-silicon Macs were repeatedly unavailable; the Intel ones build the same app.
+    runs-on: macos-15-intel
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
