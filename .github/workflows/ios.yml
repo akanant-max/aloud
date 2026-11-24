@@ -1,0 +1,116 @@
+name: Build iPad app
+
+# Builds an unsigned .ipa for sideloading (Sideloadly or AltStore sign it with your Apple ID),
+# and keeps the voice downloads the app offers mirrored as ZIP files on the ios-voices release.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SHERPA_VERSION: 1.13.7
+  MODELS: https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models
+
+jobs:
+  voices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Mirror voices as ZIP files
+        run: |
+          set -euo pipefail
+          gh release view ios-voices -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
+            gh release create ios-voices -R "$GITHUB_REPOSITORY" --prerelease --title "Voices for the iPad app" \
+              --notes "Piper voices (rhasspy/piper-voices) and Kokoro v1.0 (hexgrad), as packaged by sherpa-onnx, repacked as ZIP files for the iPad app."
+          have=$(gh release view ios-voices -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          work=$(mktemp -d); cd "$work"
+          for id in en_US-lessac-medium en_US-lessac-high en_US-ryan-high en_US-amy-medium en_US-hfc_female-medium \
+                    en_GB-alba-medium en_GB-cori-high en_GB-northern_english_male-medium; do
+            name="piper-$id.zip"
+            if grep -qx "$name" <<< "$have"; then echo "$name already mirrored"; continue; fi
+            curl -fsSL --retry 3 "$MODELS/vits-piper-$id.tar.bz2" | tar xj
+            (cd "vits-piper-$id" && rm -f MODEL_CARD && zip -qr "../$name" .)
+            gh release upload ios-voices -R "$GITHUB_REPOSITORY" "$name" --clobber
+            rm -rf "vits-piper-$id" "$name"
+            echo "$name mirrored"
+          done
+          name=natural-voices.zip
+          if ! grep -qx "$name" <<< "$have"; then
+            curl -fsSL --retry 3 "$MODELS/kokoro-int8-multi-lang-v1_0.tar.bz2" | tar xj
+            cd kokoro-int8-multi-lang-v1_0
+            zip -qr "../$name" model.int8.onnx voices.bin tokens.txt lexicon-us-en.txt lexicon-gb-en.txt espeak-ng-data
+            cd ..
+            gh release upload ios-voices -R "$GITHUB_REPOSITORY" "$name" --clobber
+            echo "$name mirrored"
+          fi
+
+  app:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache sherpa-onnx for iOS
+        id: sherpa
+        uses: actions/cache@v4
+        with:
+          path: ios/Frameworks
+          key: sherpa-onnx-ios-${{ env.SHERPA_VERSION }}-v1
+
+      - name: Build sherpa-onnx for iOS
+        if: steps.sherpa.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 -b "v$SHERPA_VERSION" https://github.com/k2-fsa/sherpa-onnx "$RUNNER_TEMP/sherpa-onnx"
+          cd "$RUNNER_TEMP/sherpa-onnx"
+          ./build-ios.sh > "$RUNNER_TEMP/sherpa-build.log" 2>&1 || { tail -n 80 "$RUNNER_TEMP/sherpa-build.log"; exit 1; }
+          tail -n 5 "$RUNNER_TEMP/sherpa-build.log"
+          mkdir -p "$GITHUB_WORKSPACE/ios/Frameworks"
+          cp -RL build-ios/sherpa-onnx.xcframework "$GITHUB_WORKSPACE/ios/Frameworks/"
+          cp -RL build-ios/ios-onnxruntime/onnxruntime.xcframework "$GITHUB_WORKSPACE/ios/Frameworks/"
+          ls -la "$GITHUB_WORKSPACE/ios/Frameworks"
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen > /dev/null
+          cd ios && xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          cd ios
+          xcodebuild -project Aloud.xcodeproj -scheme Aloud -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=1.0.${{ github.run_number }} \
+            build 2>&1 | tee xcodebuild.log | grep -E "error:|warning: .*(deprecated|unused)|BUILD (SUCCEEDED|FAILED)|\*\* " || true
+          grep -q "BUILD SUCCEEDED" xcodebuild.log || { grep -E "error:" -A3 xcodebuild.log | head -150; exit 1; }
+
+      - name: Package the .ipa
+        run: |
+          set -euo pipefail
+          cd ios
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Aloud.app Payload/
+          zip -qry Aloud-iPad.ipa Payload
+          ls -la Aloud-iPad.ipa
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          cd ios
+          gh release delete ios-latest -R "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create ios-latest -R "$GITHUB_REPOSITORY" --prerelease --title "Aloud for iPad (sideload)" \
+            --notes "Unsigned build $GITHUB_RUN_NUMBER of ${GITHUB_SHA::7}. Install it with Sideloadly or AltStore from a Windows PC, signing with your Apple ID. With a free Apple ID it needs re-installing every 7 days." \
+            Aloud-iPad.ipa

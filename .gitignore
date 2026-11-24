@@ -19,3 +19,6 @@ desktop/resources/windows/sherpa/
 desktop/libs/
 desktop/controls/bin/
 desktop/controls/obj/
+ios/Frameworks/
+ios/build/
+ios/Aloud.xcodeproj/
