@@ -24,6 +24,8 @@ dependencies {
   implementation("org.jsoup:jsoup:1.21.1")
   implementation("org.apache.pdfbox:pdfbox:3.0.5")
   implementation("org.apache.commons:commons-compress:1.27.1")
+  // Title bar colours through the Windows DWM API.
+  implementation("net.java.dev.jna:jna-platform:5.15.0")
   // sherpa-onnx's Java API, for the natural voices. Fetched by the build from its GitHub release;
   // its native libraries ship in resources/windows/sherpa.
   implementation(files("libs/sherpa-onnx-jvm-1.13.7.jar"))

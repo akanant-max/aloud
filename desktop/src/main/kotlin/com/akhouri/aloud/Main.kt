@@ -1,6 +1,10 @@
 package com.akhouri.aloud
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import com.akhouri.aloud.util.WindowChrome
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -228,6 +232,18 @@ fun main() {
         pureBlack = settings.pureBlack,
         systemDark = systemDark,
       ) {
+        // The title bar takes the app's colours and follows theme changes.
+        val chrome = MaterialTheme.colorScheme
+        LaunchedEffect(chrome.surface, chrome.onSurface, visible) {
+          if (visible) {
+            WindowChrome.apply(
+              window,
+              caption = chrome.surface.toArgb() and 0xFFFFFF,
+              text = chrome.onSurface.toArgb() and 0xFFFFFF,
+              dark = chrome.surface.luminance() < 0.5f,
+            )
+          }
+        }
         AloudRoot(graph, navigator, backDispatcher)
       }
     }
