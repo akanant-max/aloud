@@ -93,6 +93,7 @@ struct EmptyLibrary: View {
 
 extension Book {
   /// One line about where listening stands.
+  @MainActor
   func statusLine(settings: Settings) -> String {
     if completed { return "Finished" }
     if !started {

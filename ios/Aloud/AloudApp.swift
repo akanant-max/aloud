@@ -112,6 +112,7 @@ struct RootView: View {
   }
 }
 
+@MainActor
 enum Theme {
   static func background(_ settings: Settings, _ scheme: ColorScheme) -> Color {
     let dark = settings.theme == .dark || (settings.theme == .system && scheme == .dark)
