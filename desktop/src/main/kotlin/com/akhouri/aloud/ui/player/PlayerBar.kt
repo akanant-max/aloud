@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
@@ -173,6 +174,9 @@ fun PlayerBar(onOpenReader: (String) -> Unit) {
           horizontalArrangement = Arrangement.End,
           modifier = Modifier.weight(1f),
         ) {
+          narration.bookId?.let { bookId ->
+            HistoryButton(bookId) { entry -> scope.launch { narrator.seekTo(entry.paragraphIndex, entry.charOffset) } }
+          }
           SpeedButton(rate = narration.speechRate, onRate = { scope.launch { narrator.setSpeechRate(it) } })
           SleepButton(
             state = sleep,
@@ -193,6 +197,29 @@ fun PlayerBar(onOpenReader: (String) -> Unit) {
             modifier = Modifier.width(110.dp),
           )
         }
+      }
+    }
+  }
+}
+
+/** The places remembered in this book: where play was pressed, the app opened, a jump made. */
+@Composable
+private fun HistoryButton(bookId: String, onPick: (com.akhouri.aloud.data.HistoryEntry) -> Unit) {
+  var open by remember { mutableStateOf(false) }
+  Box {
+    IconButton(onClick = { open = true }) {
+      Icon(Icons.Default.History, contentDescription = "Where you've been in this book")
+    }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.width(420.dp)) {
+      Text(
+        "Where you've been",
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+      )
+      HistoryList(bookId = bookId, limit = 12) { entry ->
+        open = false
+        onPick(entry)
       }
     }
   }

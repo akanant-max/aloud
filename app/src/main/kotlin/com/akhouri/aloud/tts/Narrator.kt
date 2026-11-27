@@ -10,6 +10,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
 import com.akhouri.aloud.data.AloudDatabase
+import com.akhouri.aloud.data.HistoryEntry
+import com.akhouri.aloud.data.ListeningHistory
+import com.akhouri.aloud.data.PlaceSuggestion
 import com.akhouri.aloud.data.entity.BookEntity
 import com.akhouri.aloud.data.entity.ChapterEntity
 import com.akhouri.aloud.data.entity.ImportState
@@ -96,6 +99,10 @@ class Narrator(
     listFiles()?.forEach { it.delete() }
     mkdirs()
   }
+
+  /** Where the listener has been in each book; set by the app graph. */
+  @Volatile
+  var history: ListeningHistory? = null
 
   /** Paragraphs to step back when resuming after a pause; set from settings. */
   @Volatile
@@ -206,6 +213,54 @@ class Narrator(
     player.addListener(listener)
   }
 
+  // ---- listening history ------------------------------------------------------------------
+
+  /**
+   * The app has been opened. If narration ran on a long way since the listener last did
+   * anything, they may have fallen asleep to it: offer the way back.
+   */
+  suspend fun noteAppOpened() {
+    val history = history ?: return
+    val now = _state.value
+    val bookId = now.bookId ?: return
+    val last = history.latestAwake(bookId)
+    if (last != null &&
+      System.currentTimeMillis() - last.time >= ListeningHistory.DRIFT_MS &&
+      now.paragraphIndex > last.paragraphIndex &&
+      (now.chapterIndex != last.chapterIndex ||
+        now.paragraphIndex - last.paragraphIndex >= ListeningHistory.DRIFT_PARAGRAPHS)
+    ) {
+      history.suggest(PlaceSuggestion(bookId, last, now.chapterIndex, now.chapterTitle))
+    }
+    note(ListeningHistory.OPENED_APP)
+  }
+
+  private suspend fun note(reason: String, awake: Boolean = true) {
+    val history = history ?: return
+    val at = _state.value
+    val bookId = at.bookId ?: return
+    val text = runCatching { database.paragraphDao().at(bookId, at.paragraphIndex)?.text }.getOrNull().orEmpty()
+    history.record(
+      bookId,
+      HistoryEntry(
+        time = System.currentTimeMillis(),
+        paragraphIndex = at.paragraphIndex,
+        charOffset = at.charOffset,
+        chapterIndex = at.chapterIndex,
+        chapterTitle = at.chapterTitle,
+        reason = reason,
+        snippet = snippetOf(text, at.charOffset),
+        awake = awake,
+      ),
+    )
+  }
+
+  private fun snippetOf(text: String, offset: Int): String {
+    val start = offset.coerceIn(0, text.length)
+    val rest = text.substring(start).trim()
+    return if (rest.length <= 90) rest else rest.take(90).substringBeforeLast(' ') + "…"
+  }
+
   // ---- public control ---------------------------------------------------------------------
 
   /** Loads a book and positions narration, without starting it. */
@@ -252,6 +307,7 @@ class Narrator(
 
       val rewind = resumingFromPause && rewindOnResume > 0
       resumingFromPause = false
+      note(ListeningHistory.PRESSED_PLAY)
 
       // Paused with a playlist still in hand: carry on from the very word it stopped at.
       if (pipelineLive && !rewind) {
@@ -275,9 +331,11 @@ class Narrator(
     }
   }
 
-  suspend fun pause() {
+  /** Pauses. [automatic] is for pauses nobody asked for just then, like the sleep timer's. */
+  suspend fun pause(automatic: Boolean = false) {
     mutex.withLock {
       if (!_state.value.hasBook) return
+      if (automatic) note(ListeningHistory.SLEEP_TIMER, awake = false) else note(ListeningHistory.PAUSED)
       player.pause()
       _state.value = _state.value.copy(isPlaying = false, isPreparing = false)
       persistProgress()
@@ -305,6 +363,8 @@ class Narrator(
       if (current.bookId == null) return
       val target = paragraphIndex.coerceIn(0, (current.paragraphCount - 1).coerceAtLeast(0))
       val chapter = chapterOf(current.chapters, target)
+      // Remember where this jump left from, so it can be undone from the history.
+      if (kotlin.math.abs(target - current.paragraphIndex) > 2) note(ListeningHistory.BEFORE_JUMP)
 
       resumingFromPause = false
       _state.value = current.copy(

@@ -105,6 +105,7 @@ import com.akhouri.aloud.data.entity.BookEntity
 import com.akhouri.aloud.data.entity.CollectionEntity
 import com.akhouri.aloud.data.entity.ImportState
 import com.akhouri.aloud.graph
+import com.akhouri.aloud.ui.player.PlaceSuggestionCard
 import com.akhouri.aloud.ui.BookCover
 import com.akhouri.aloud.ui.EmptyState
 import com.akhouri.aloud.ui.NowPlayingBar
@@ -568,6 +569,9 @@ fun LibraryScreen(
             BookTile(item = item, actions = bookActions(item.book))
           }
         } else {
+          item(key = "dozed", span = { GridItemSpan(maxLineSpan) }) {
+            PlaceSuggestionCard(Modifier.padding(horizontal = 6.dp, vertical = 8.dp))
+          }
           shelves.forEach { shelf ->
             if (shelf.isEmpty) return@forEach
             val isFolded = shelf.shelf.name in foldedShelves
@@ -614,6 +618,9 @@ fun LibraryScreen(
             BookRow(item = item, actions = bookActions(item.book))
           }
         } else {
+          item(key = "dozed") {
+            PlaceSuggestionCard(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+          }
           shelves.forEach { shelf ->
             if (shelf.isEmpty) return@forEach
             val isFolded = shelf.shelf.name in foldedShelves

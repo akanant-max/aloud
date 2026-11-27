@@ -1,6 +1,7 @@
 package com.akhouri.aloud
 
 import com.akhouri.aloud.audio.WavPlayer
+import com.akhouri.aloud.data.ListeningHistory
 import com.akhouri.aloud.data.BookDao
 import com.akhouri.aloud.data.BookmarkDao
 import com.akhouri.aloud.data.ChapterDao
@@ -58,7 +59,9 @@ class AppGraph {
 
   val speech = Speech()
   val player = WavPlayer()
-  val narrator = Narrator(speech, books, chapters, paragraphs, progress, player, scope)
+  /** Where the listener has been in each book, for finding the way back after dozing off. */
+  val history = ListeningHistory(java.io.File(AppPaths.dataDir, "listening-history.tsv"), scope)
+  val narrator = Narrator(speech, books, chapters, paragraphs, progress, player, scope).also { it.history = history }
   val sleepTimer = SleepTimer(narrator, scope)
   val mediaControls = MediaControls(narrator, { settings.current.skipParagraphs }, scope)
 

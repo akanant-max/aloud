@@ -1,6 +1,7 @@
 package com.akhouri.aloud.ui.player
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,7 +68,13 @@ fun PlayerSheet(onDismiss: () -> Unit) {
   val skip = saved.skipParagraphs
 
   ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-    Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+    Column(
+      Modifier
+        .verticalScroll(rememberScrollState())
+        .padding(horizontal = 20.dp)
+        .padding(bottom = 32.dp),
+    ) {
+      PlaceSuggestionCard(Modifier.padding(bottom = 16.dp))
 
       Text(
         text = state.bookTitle,
@@ -195,6 +202,13 @@ fun PlayerSheet(onDismiss: () -> Unit) {
             onClick = { sleepTimer.startUntilEndOfChapter() },
             label = { Text("End of chapter") },
           )
+        }
+      }
+
+      state.bookId?.let { bookId ->
+        SectionLabel("Where you've been")
+        HistoryList(bookId = bookId, limit = 10) { entry ->
+          scope.launch { narrator.seekTo(entry.paragraphIndex, entry.charOffset) }
         }
       }
     }

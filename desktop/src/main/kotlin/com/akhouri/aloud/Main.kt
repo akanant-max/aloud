@@ -1,6 +1,7 @@
 package com.akhouri.aloud
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -225,6 +226,17 @@ fun main() {
           window.toFront()
           window.requestFocus()
         }
+      }
+      // Coming back to the window is a moment the listener is awake: remember where the book is,
+      // and offer the way back if it read on while they slept.
+      DisposableEffect(window) {
+        val listener = object : java.awt.event.WindowAdapter() {
+          override fun windowGainedFocus(e: java.awt.event.WindowEvent?) {
+            graph.scope.launch { graph.narrator.noteAppOpened() }
+          }
+        }
+        window.addWindowFocusListener(listener)
+        onDispose { window.removeWindowFocusListener(listener) }
       }
       AloudTheme(
         themeMode = settings.themeMode,

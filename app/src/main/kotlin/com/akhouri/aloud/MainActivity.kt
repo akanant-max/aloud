@@ -14,6 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.akhouri.aloud.data.Settings
 import com.akhouri.aloud.ui.AloudNavHost
 import com.akhouri.aloud.ui.CrashReportScreen
@@ -60,6 +62,9 @@ class MainActivity : ComponentActivity() {
   override fun onStart() {
     super.onStart()
     graph.ensurePlaybackService()
+    // Opening the app is a moment the listener is awake: remember where the book is, and offer
+    // the way back if it read on while they slept.
+    lifecycleScope.launch { graph.narrator.noteAppOpened() }
   }
 
   /** Without this the media notification is silently suppressed on Android 13 and up. */

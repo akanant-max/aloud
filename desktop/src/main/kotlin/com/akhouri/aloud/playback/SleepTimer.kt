@@ -74,7 +74,7 @@ class SleepTimer(
   }
 
   private suspend fun finish() {
-    narrator.pause()
+    narrator.pause(automatic = true)
     narrator.setFade(1f)
     _state.value = State()
   }

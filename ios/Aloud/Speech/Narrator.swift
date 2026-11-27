@@ -19,6 +19,7 @@ final class Narrator: ObservableObject {
   private let library: Library
   private let settings: Settings
   private let voices: Voices
+  private let history: ListeningHistory
 
   private let engine = AVAudioEngine()
   private let player = AVAudioPlayerNode()
@@ -40,7 +41,8 @@ final class Narrator: ObservableObject {
 
   private static let renderAhead = 3
 
-  init(library: Library, settings: Settings, voices: Voices) {
+  init(library: Library, settings: Settings, voices: Voices, history: ListeningHistory) {
+    self.history = history
     self.library = library
     self.settings = settings
     self.voices = voices
@@ -95,14 +97,17 @@ final class Narrator: ObservableObject {
       if $0.completed && position == nil { $0.completed = false; $0.position = .start }
     }
     start(from: place)
+    note(HistoryEntry.pressedPlay)
   }
 
   func togglePlayPause() {
     if isPlaying { pause() } else { resume() }
   }
 
-  func pause() {
+  /// Pauses. `automatic` is for pauses nobody asked for just then, like the sleep timer's.
+  func pause(automatic: Bool = false) {
     guard isPlaying else { return }
+    note(automatic ? HistoryEntry.sleepTimer : HistoryEntry.paused, awake: !automatic)
     player.pause()
     isPlaying = false
     pausedAt = Date()
@@ -113,6 +118,7 @@ final class Narrator: ObservableObject {
   func resume() {
     guard let bookID else { return }
     if isPlaying { return }
+    note(HistoryEntry.pressedPlay)
     let longPause = pausedAt.map { Date().timeIntervalSince($0) > 30 } ?? true
     if queued.isEmpty || (settings.replayAfterPause && longPause) || !engine.isRunning {
       // Start the sentence again, which also rebuilds anything the system tore down.
@@ -141,6 +147,10 @@ final class Narrator: ObservableObject {
   /// Jumps to a paragraph, keeping playing or paused as it was.
   func jump(to position: Position) {
     guard bookID != nil else { return }
+    // Remember where this jump left from, so it can be undone from the history.
+    if let from = currentPosition, from.chapter != position.chapter || abs(from.paragraph - position.paragraph) > 2 {
+      note(HistoryEntry.beforeJump)
+    }
     let wasPlaying = isPlaying || isPreparing
     if wasPlaying {
       start(from: position)
@@ -274,7 +284,7 @@ final class Narrator: ObservableObject {
       engine.mainMixerNode.outputVolume = Float(max(0, remaining) / 10)
     }
     if remaining <= 0 {
-      pause()
+      pause(automatic: true)
       setSleepTimer(minutes: nil)
     }
   }
@@ -403,7 +413,7 @@ final class Narrator: ObservableObject {
       if sleepAtChapterEnd, next.chapter != chunk.chapter {
         current = next
         sleepAtChapterEnd = false
-        pause()
+        pause(automatic: true)
         return
       }
       current = next
@@ -442,6 +452,38 @@ final class Narrator: ObservableObject {
     if isPlaying || isPreparing, let position = currentPosition {
       start(from: position)
     }
+  }
+
+  // MARK: Listening history
+
+  /// The app has come to the front. If narration ran on a long way since the listener last did
+  /// anything, they may have fallen asleep to it: offer the way back.
+  func noteAppOpened() {
+    guard let bookID, let book, let now = currentPosition else { return }
+    if let last = history.latestAwake(bookID),
+       Date().timeIntervalSince(last.time) >= ListeningHistory.driftTime,
+       (now.chapter, now.paragraph) > (last.position.chapter, last.position.paragraph),
+       now.chapter != last.position.chapter || now.paragraph - last.position.paragraph >= ListeningHistory.driftParagraphs {
+      history.suggestion = PlaceSuggestion(bookID: bookID, entry: last, nowChapterTitle: book.chapterTitle(now.chapter))
+    }
+    note(HistoryEntry.openedApp)
+  }
+
+  private func note(_ reason: String, awake: Bool = true) {
+    guard let bookID, let book, let at = currentPosition else { return }
+    var snippet = ""
+    if let content, at.chapter < content.chapters.count, at.paragraph < content.chapters[at.chapter].paragraphs.count {
+      let text = content.chapters[at.chapter].paragraphs[at.paragraph] as NSString
+      let rest = text.substring(from: min(at.offset, text.length)).trimmingCharacters(in: .whitespaces)
+      if rest.count <= 90 {
+        snippet = rest
+      } else {
+        let cut = String(rest.prefix(90))
+        snippet = (cut.range(of: " ", options: .backwards).map { String(cut[..<$0.lowerBound]) } ?? cut) + "…"
+      }
+    }
+    history.record(bookID, HistoryEntry(time: Date(), position: at, chapterTitle: book.chapterTitle(at.chapter),
+                                        reason: reason, snippet: snippet, awake: awake))
   }
 
   /// Keeps the place in the library.
@@ -485,7 +527,7 @@ final class Narrator: ObservableObject {
         guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
         // Headphones unplugged or disconnected: stop talking out loud.
-        self?.pause()
+        self?.pause(automatic: true)
       } }
       .store(in: &subscriptions)
 

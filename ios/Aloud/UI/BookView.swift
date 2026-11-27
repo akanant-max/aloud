@@ -74,6 +74,17 @@ struct BookView: View {
         Text("Times are estimated from how fast your voices have been reading, and follow the speed you choose.")
           .font(.caption).foregroundStyle(.secondary)
 
+        // Where the listener has been.
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Where you've been").font(.title2.weight(.bold))
+          HistoryList(bookID: book.id, limit: 8) { entry in
+            narrator.play(book.id, at: entry.position)
+          }
+          .padding(.horizontal, 14)
+          .padding(.vertical, 6)
+          .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        }
+
         // Chapters.
         VStack(alignment: .leading, spacing: 0) {
           Button { withAnimation(.snappy) { showChapters.toggle() } } label: {

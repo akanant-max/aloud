@@ -20,6 +20,7 @@ struct LibraryView: View {
         EmptyLibrary { picking = true }
       } else {
         LazyVStack(alignment: .leading, spacing: 18) {
+          if !selecting { PlaceSuggestionCard() }
           if !selecting, let continuing { ContinueCard(book: continuing) }
           shelf("Ongoing", books: ongoing, collections: [])
           shelf("Library", books: unstarted, collections: collectionsHere)

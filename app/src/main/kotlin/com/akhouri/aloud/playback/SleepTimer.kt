@@ -91,7 +91,7 @@ class SleepTimer(
   }
 
   private suspend fun finish() {
-    narrator.pause()
+    narrator.pause(automatic = true)
     restoreVolume()
     _state.value = State()
   }

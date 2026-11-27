@@ -8,10 +8,11 @@ final class AppModel: ObservableObject {
   let settings = Settings()
   let voices = Voices()
   let importer = Importer()
+  let history = ListeningHistory()
   let narrator: Narrator
 
   init() {
-    narrator = Narrator(library: library, settings: settings, voices: voices)
+    narrator = Narrator(library: library, settings: settings, voices: voices, history: history)
     importer.attach(library)
   }
 }
@@ -29,12 +30,14 @@ struct AloudApp: App {
         .environmentObject(model.voices)
         .environmentObject(model.importer)
         .environmentObject(model.narrator)
+        .environmentObject(model.history)
         .onOpenURL { url in model.importer.enqueue([url]) }
     }
     .onChange(of: scenePhase) { _, phase in
       switch phase {
       case .active:
         model.importer.scanInbox()
+        model.narrator.noteAppOpened()
       case .background, .inactive:
         model.narrator.save()
         model.library.saveNow()

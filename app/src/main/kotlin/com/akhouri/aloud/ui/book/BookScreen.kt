@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.akhouri.aloud.data.TextSize
 import com.akhouri.aloud.graph
+import com.akhouri.aloud.ui.player.HistoryList
 import com.akhouri.aloud.ui.BookCover
 import com.akhouri.aloud.ui.player.formatRate
 import java.util.Locale
@@ -203,6 +204,18 @@ fun BookScreen(
             },
           ) {
             Icon(Icons.Default.Replay, contentDescription = "Start from the beginning")
+          }
+        }
+      }
+
+      item {
+        SectionHeader("Where you've been")
+      }
+      item(key = "history") {
+        HistoryList(bookId = bookId, limit = 8) { entry ->
+          scope.launch {
+            appGraph.narrator.open(bookId, entry.paragraphIndex, entry.charOffset)
+            onRead()
           }
         }
       }

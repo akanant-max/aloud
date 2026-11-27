@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.akhouri.aloud.ui.player.HistoryList
 import com.akhouri.aloud.ui.LocalGraph
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -201,6 +202,18 @@ fun BookScreen(
             },
           ) {
             Icon(Icons.Default.Replay, contentDescription = "Start from the beginning")
+          }
+        }
+      }
+
+      item {
+        SectionHeader("Where you've been")
+      }
+      item(key = "history") {
+        HistoryList(bookId = bookId, limit = 8) { entry ->
+          scope.launch {
+            appGraph.narrator.open(bookId, entry.paragraphIndex, entry.charOffset)
+            onRead()
           }
         }
       }

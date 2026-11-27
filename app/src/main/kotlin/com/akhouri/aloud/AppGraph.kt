@@ -3,6 +3,7 @@ package com.akhouri.aloud
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import com.akhouri.aloud.data.ListeningHistory
 import com.akhouri.aloud.data.AloudDatabase
 import com.akhouri.aloud.data.SettingsStore
 import com.akhouri.aloud.importer.BookImporter
@@ -82,7 +83,14 @@ class AppGraph(context: Context) {
       .build()
   }
 
-  val narrator: Narrator by lazy { Narrator(appContext, ttsEngine, database, player, scope) }
+  /** Where the listener has been in each book, for finding the way back after dozing off. */
+  val history: ListeningHistory by lazy {
+    ListeningHistory(java.io.File(appContext.filesDir, "listening-history.json"), scope)
+  }
+
+  val narrator: Narrator by lazy {
+    Narrator(appContext, ttsEngine, database, player, scope).also { it.history = history }
+  }
 
   val sleepTimer: SleepTimer by lazy { SleepTimer(narrator, scope) }
 

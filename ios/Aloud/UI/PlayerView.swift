@@ -72,6 +72,7 @@ struct PlayerView: View {
             Text(book.chapterTitle(chapter(book))).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if let author = book.author { Text(author).font(.subheadline).foregroundStyle(.secondary) }
           }
+          PlaceSuggestionCard()
           if let error = narrator.error {
             Text(error).font(.callout).foregroundStyle(.red).multilineTextAlignment(.center)
           }
@@ -83,6 +84,12 @@ struct PlayerView: View {
           }
           .buttonStyle(.bordered)
           .controlSize(.large)
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Where you've been").font(.headline)
+            HistoryList(bookID: book.id, limit: 10) { entry in narrator.jump(to: entry.position) }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.top, 8)
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 30)

@@ -6,7 +6,10 @@ import com.akhouri.aloud.data.BookDao
 import com.akhouri.aloud.data.BookEntity
 import com.akhouri.aloud.data.ChapterDao
 import com.akhouri.aloud.data.ChapterEntity
+import com.akhouri.aloud.data.HistoryEntry
 import com.akhouri.aloud.data.ImportState
+import com.akhouri.aloud.data.ListeningHistory
+import com.akhouri.aloud.data.PlaceSuggestion
 import com.akhouri.aloud.data.ParagraphDao
 import com.akhouri.aloud.data.ProgressDao
 import com.akhouri.aloud.data.ProgressEntity
@@ -97,6 +100,10 @@ class Narrator(
   @Volatile
   var rewindOnResume: Int = 0
 
+  /** Where the listener has been in each book; set by the app graph. */
+  @Volatile
+  var history: ListeningHistory? = null
+
   /** The chosen voice's key (see [Voice.key]); null means the default. Set from settings. */
   @Volatile
   var voicePath: String? = null
@@ -111,6 +118,54 @@ class Narrator(
   private var fade = 1f
 
   private class Rendered(val chunk: SpeechChunk, val file: File, val rate: Float)
+
+  // ---- listening history --------------------------------------------------------------------
+
+  /**
+   * The app has been brought up. If narration ran on a long way since the listener last did
+   * anything, they may have fallen asleep to it: offer the way back.
+   */
+  suspend fun noteAppOpened() {
+    val history = history ?: return
+    val now = _state.value
+    val bookId = now.bookId ?: return
+    val last = history.latestAwake(bookId)
+    if (last != null &&
+      System.currentTimeMillis() - last.time >= ListeningHistory.DRIFT_MS &&
+      now.paragraphIndex > last.paragraphIndex &&
+      (now.chapterIndex != last.chapterIndex ||
+        now.paragraphIndex - last.paragraphIndex >= ListeningHistory.DRIFT_PARAGRAPHS)
+    ) {
+      history.suggest(PlaceSuggestion(bookId, last, now.chapterIndex, now.chapterTitle))
+    }
+    note(ListeningHistory.OPENED_APP)
+  }
+
+  private suspend fun note(reason: String, awake: Boolean = true) {
+    val history = history ?: return
+    val at = _state.value
+    val bookId = at.bookId ?: return
+    val text = runCatching { paragraphs.range(bookId, at.paragraphIndex, 1).firstOrNull()?.text }.getOrNull().orEmpty()
+    history.record(
+      bookId,
+      HistoryEntry(
+        time = System.currentTimeMillis(),
+        paragraphIndex = at.paragraphIndex,
+        charOffset = at.charOffset,
+        chapterIndex = at.chapterIndex,
+        chapterTitle = at.chapterTitle,
+        reason = reason,
+        snippet = snippetOf(text, at.charOffset),
+        awake = awake,
+      ),
+    )
+  }
+
+  private fun snippetOf(text: String, offset: Int): String {
+    val start = offset.coerceIn(0, text.length)
+    val rest = text.substring(start).trim()
+    return if (rest.length <= 90) rest else rest.take(90).substringBeforeLast(' ') + "…"
+  }
 
   // ---- control ------------------------------------------------------------------------------
 
@@ -163,6 +218,7 @@ class Narrator(
 
       val rewind = resumingFromPause && rewindOnResume > 0
       resumingFromPause = false
+      note(ListeningHistory.PRESSED_PLAY)
 
       // Paused with a playlist still in hand: carry on from the very word it stopped at.
       if (pipelineLive && !rewind) {
@@ -183,9 +239,11 @@ class Narrator(
     }
   }
 
-  suspend fun pause() {
+  /** Pauses. [automatic] is for pauses nobody asked for just then, like the sleep timer's. */
+  suspend fun pause(automatic: Boolean = false) {
     mutex.withLock {
       if (!_state.value.hasBook) return
+      if (automatic) note(ListeningHistory.SLEEP_TIMER, awake = false) else note(ListeningHistory.PAUSED)
       player.pause()
       resumingFromPause = pipelineLive
       _state.value = _state.value.copy(isPlaying = false, isPreparing = false)
@@ -214,6 +272,8 @@ class Narrator(
       if (current.bookId == null) return
       val target = paragraphIndex.coerceIn(0, (current.paragraphCount - 1).coerceAtLeast(0))
       val chapter = chapterOf(current.chapters, target)
+      // Remember where this jump left from, so it can be undone from the history.
+      if (kotlin.math.abs(target - current.paragraphIndex) > 2) note(ListeningHistory.BEFORE_JUMP)
       resumingFromPause = false
       _state.value = current.copy(
         paragraphIndex = target,
